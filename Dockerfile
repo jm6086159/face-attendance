@@ -1,31 +1,53 @@
+# Use PHP CLI so we can run built-in server (php -S)
 FROM php:8.2-cli
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    git unzip libpng-dev libonig-dev libxml2-dev zip curl libzip-dev \
-    && docker-php-ext-install pdo pdo_sqlite mbstring bcmath gd zip \
+# set working dir
+WORKDIR /var/www/html
+
+# Install system dependencies required for extensions and builds
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    git \
+    unzip \
+    curl \
+    zip \
+    sqlite3 \
+    pkg-config \
+    libsqlite3-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libonig-dev \
+    libxml2-dev \
+    zlib1g-dev \
+    libzip-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Composer
+# Configure GD to use freetype and jpeg (required flags for docker-php-ext-install)
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg
+
+# Install PHP extensions (PDO, sqlite, mbstring, bcmath, gd, zip)
+RUN docker-php-ext-install pdo pdo_sqlite mbstring bcmath gd zip
+
+# Install composer (copy from official composer image)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Set working directory
-WORKDIR /opt/render/project/src
-
-# Copy app
+# Copy application code
 COPY . .
 
-# Install dependencies
-RUN composer install --no-dev --optimize-autoloader --no-interaction
-
-# Create SQLite database
+# Ensure database directory exists and create sqlite file so build won't fail later
 RUN mkdir -p database \
- && touch database/database.sqlite \
- && chmod -R 777 database storage bootstrap/cache
+    && touch database/database.sqlite \
+    && chmod 664 database/database.sqlite
 
-# Expose Render port
-EXPOSE 10000
+# Install PHP dependencies
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
-# Start Laravel
-CMD php -S 0.0.0.0:$PORT -t public
+# Set correct permissions for Laravel storage and cache (adjust user as needed)
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/database || true \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/database || true
 
+# Expose a port (Render will forward $PORT automatically)
+EXPOSE 8000
+
+# Use PHP built-in server and bind to $PORT (Render sets $PORT env)
+CMD ["sh", "-c", "php -S 0.0.0.0:${PORT:-8000} -t public"]
