@@ -1,47 +1,41 @@
-# Use PHP CLI (best for Render)
-FROM php:8.2-cli
+# -------------------------------
+# Laravel + SQLite + Nginx + PHP
+# -------------------------------
 
-# Set working directory
-WORKDIR /var/www/html
+# Base image
+FROM php:8.2-fpm
 
 # Install system dependencies
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    git \
-    unzip \
-    curl \
-    zip \
-    sqlite3 \
-    libsqlite3-dev \
-    libpng-dev \
-    libjpeg-dev \
-    libfreetype6-dev \
-    libonig-dev \
-    libxml2-dev \
-    libzip-dev \
+    git unzip libpng-dev libonig-dev libxml2-dev zip curl libzip-dev libsqlite3-dev \
+    nginx supervisor \
+    && docker-php-ext-install pdo_mysql pdo_sqlite mbstring exif pcntl bcmath gd zip \
     && rm -rf /var/lib/apt/lists/*
-
-# Configure & install PHP extensions
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo pdo_sqlite mbstring bcmath gd zip
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy Laravel app
+# Set working directory
+WORKDIR /var/www
+
+# Copy app code
 COPY . .
 
-# Create SQLite database
-RUN mkdir -p database \
-    && touch database/database.sqlite
+# Ensure database folder & SQLite file exist
+RUN mkdir -p /var/www/database /var/www/storage /var/www/bootstrap/cache \
+    && touch /var/www/database/database.sqlite \
+    && chown -R www-data:www-data /var/www \
+    && chmod -R 775 /var/www/storage /var/www/bootstrap/cache /var/www/database
 
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
-# Set permissions (safe for Render)
-RUN chmod -R 775 storage bootstrap/cache database || true
+# Copy Nginx & Supervisor configs
+COPY docker/nginx.conf /etc/nginx/sites-available/default
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Expose port (Render uses $PORT)
-EXPOSE 8000
+# Expose HTTP port
+EXPOSE 80
 
-# Start Laravel using PHP built-in server
-CMD ["sh", "-c", "php artisan migrate --force || true && php -S 0.0.0.0:${PORT:-8000} -t public"]
+# Start Supervisor (runs Nginx + PHP-FPM)
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
