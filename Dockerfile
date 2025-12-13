@@ -1,41 +1,30 @@
-# -------------------------------
-# Laravel + SQLite + Nginx + PHP
-# -------------------------------
-
-# Base image
-FROM php:8.2-fpm
+FROM php:8.2-cli
 
 # Install system dependencies
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    git unzip libpng-dev libonig-dev libxml2-dev zip curl libzip-dev libsqlite3-dev \
-    nginx supervisor \
-    && docker-php-ext-install pdo_mysql pdo_sqlite mbstring exif pcntl bcmath gd zip \
+RUN apt-get update && apt-get install -y \
+    git unzip libpng-dev libonig-dev libxml2-dev zip curl libzip-dev \
+    && docker-php-ext-install pdo pdo_sqlite mbstring bcmath gd zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Set working directory
-WORKDIR /var/www
+WORKDIR /opt/render/project/src
 
-# Copy app code
+# Copy app
 COPY . .
 
-# Ensure database folder & SQLite file exist
-RUN mkdir -p /var/www/database /var/www/storage /var/www/bootstrap/cache \
-    && touch /var/www/database/database.sqlite \
-    && chown -R www-data:www-data /var/www \
-    && chmod -R 775 /var/www/storage /var/www/bootstrap/cache /var/www/database
+# Install dependencies
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+# Create SQLite database
+RUN mkdir -p database \
+ && touch database/database.sqlite \
+ && chmod -R 777 database storage bootstrap/cache
 
-# Copy Nginx & Supervisor configs
-COPY docker/nginx.conf /etc/nginx/sites-available/default
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Expose Render port
+EXPOSE 10000
 
-# Expose HTTP port
-EXPOSE 80
-
-# Start Supervisor (runs Nginx + PHP-FPM)
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Start Laravel
+CMD php artisan serve --host=0.0.0.0 --port=${PORT:-10000}
