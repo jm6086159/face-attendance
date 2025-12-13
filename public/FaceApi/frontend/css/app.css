@@ -1,0 +1,64 @@
+/* Smart Face Attendance – shared styles */
+:root{
+  /* School brand palette (St. Francis Xavier College) */
+  --sfa-bg:#f6faf7;           /* soft light background */
+  --sfa-fg:#0f172a;           /* slate foreground */
+  --sfa-muted:#5b728a;        /* desaturated text */
+  --sfa-card:#ffffff;         /* card surface */
+  --sfa-border:#e2e8f0;       /* borders */
+
+  /* Brand colors */
+  --sfa-primary:#1b7f3a;      /* deep college green */
+  --sfa-gold:#e3b023;         /* banner gold */
+  --sfa-navy:#0b3d6e;         /* shield navy */
+  --sfa-green:#1b7f3a;        /* alias */
+  --sfa-accent:#e3b023;       /* alias to gold */
+}
+
+html,body{background:var(--sfa-bg);color:var(--sfa-fg)}
+
+/* Top navbar */
+.sfa-navbar{background:#fff;border-bottom:1px solid var(--sfa-border)}
+.sfa-navbar .brand{font-weight:600;display:flex;align-items:center;gap:.5rem}
+.sfa-navbar .brand svg{color:var(--sfa-primary)}
+
+/* Page container */
+.sfa-container{max-width:1000px;margin:0 auto;padding:24px 16px}
+
+/* Cards */
+.sfa-card{background:var(--sfa-card);border:1px solid var(--sfa-border);border-radius:12px;padding:18px}
+.sfa-muted{color:var(--sfa-muted)}
+
+/* CTA buttons */
+.sfa-btn{display:inline-block;padding:10px 16px;border-radius:10px;text-decoration:none}
+.sfa-btn-primary{background:var(--sfa-primary);color:#fff}
+.sfa-btn-outline{background:#fff;border:1px solid var(--sfa-border);color:var(--sfa-fg)}
+.sfa-btn-gold{background:var(--sfa-gold);color:#1b1b1b}
+.sfa-btn-navy{background:var(--sfa-navy);color:#fff}
+
+/* Video surface */
+.sfa-video-wrap{position:relative;display:inline-block}
+.sfa-video-wrap canvas{position:absolute;left:0;top:0}
+
+/* Status badges */
+.sfa-badge{display:inline-block;border-radius:999px;padding:.2rem .6rem;font-size:.8rem}
+.sfa-badge-success{background:#e6f4ea;color:#1b7f3a}
+.sfa-badge-info{background:#e3eff9;color:#0b3d6e}
+.sfa-badge-warn{background:#fff6db;color:#6e5600}
+.sfa-badge-danger{background:#fee2e2;color:#991b1b}
+
+/* Helpers */
+.sfa-gap-12{gap:12px}
+.sfa-gap-8{gap:8px}
+.sfa-flex{display:flex}
+.sfa-items-center{align-items:center}
+.sfa-justify-between{justify-content:space-between}
+.sfa-justify-center{justify-content:center}
+.sfa-mt-12{margin-top:12px}
+.sfa-mt-18{margin-top:18px}
+.sfa-mb-12{margin-bottom:12px}
+.sfa-text-center{text-align:center}
+
+/* Page specific polish */
+#status{min-height:24px}
+.sfa-hero{background:linear-gradient(180deg, rgba(37,99,235,0.05), rgba(139,92,246,0.05));border:1px dashed var(--sfa-border);border-radius:12px;padding:12px}

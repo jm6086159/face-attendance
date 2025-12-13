@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="csrf-token" content="{{ csrf_token() }}"/>
+  <title>Face Attendance - Face Attendance System</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="/FaceApi/frontend/css/app.css"/>
+
+  <!-- face-api.js ONCE, before your script -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+</head>
+<body>
+
+  <!-- Navbar removed intentionally for kiosk mode (no admin navigation) -->
+
+  <div class="sfa-container" style="max-width: 1000px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="m-0">Face Attendance</h2>
+      <div class="text-end">
+        <div class="small muted">Models status:</div>
+        <div id="status" class="small sfa-badge sfa-badge-info">Loading...</div>
+        <!-- Link removed to limit navigation from kiosk screen -->
+      </div>
+    </div>
+
+    <div class="sfa-card shadow-sm mb-3 text-center">
+        <div class="sfa-video-wrap mb-2">
+          <video id="video" width="640" height="480" autoplay muted playsinline></video>
+          <canvas id="overlay" width="640" height="480"></canvas>
+        </div>
+
+        <div class="row g-3 mt-2">
+          <div class="col-12 col-md-4">
+            <div class="p-3 border rounded bg-white">
+              <div class="small sfa-muted">Recognized:</div>
+              <div id="who" class="fw-semibold">--</div>
+              <div class="small sfa-muted">Distance (lower is better):</div>
+              <div id="distance" class="small">--</div>
+            </div>
+          </div>
+          <div class="col-12 col-md-8">
+            <div class="d-flex align-items-center gap-2 justify-content-center justify-content-md-start">
+              <span class="sfa-badge sfa-badge-success">Auto mode</span>
+              <span class="small sfa-muted">Attendance will be marked automatically when your face is recognized.</span>
+            </div>
+            <div id="flash" class="mt-2 small"></div>
+          </div>
+        </div>
+    </div>
+
+    <div class="sfa-card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title mb-2">Tips</h5>
+        <ul class="small text-muted mb-0">
+          <li>Make sure lighting is good and your face is centered.</li>
+          <li>Recognition uses the closest match among known faces loaded from the server.</li>
+          <li>Set a threshold (e.g. <code>0.5</code>) to decide if the match is confident.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Your JS (after face-api) -->
+  <script defer src="/FaceApi/frontend/js/attendance.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

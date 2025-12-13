@@ -1,0 +1,16 @@
+#videoContainer {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      margin: auto;
+    }
+
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    #status {
+      margin-top: 1rem;
+    }
