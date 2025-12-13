@@ -37,9 +37,13 @@ RUN mkdir -p \
     /var/lib/nginx \
     && touch database/database.sqlite
 
-# Permissions
+# Set correct ownership and permissions
 RUN chown -R www-data:www-data /var/www \
-    && chmod -R 775 storage bootstrap/cache database
+    && chmod -R 775 storage bootstrap/cache \
+    && chmod 666 database/database.sqlite
+
+# Create necessary symlink for Laravel storage
+RUN php artisan storage:link || true
 
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction
