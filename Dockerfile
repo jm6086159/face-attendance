@@ -1,4 +1,3 @@
-# Laravel + Nginx + PHP-FPM + SQLite (SINGLE CONTAINER)
 FROM php:8.2-fpm
 
 # Install system packages
@@ -34,6 +33,8 @@ RUN mkdir -p \
     storage/framework/views \
     database \
     bootstrap/cache \
+    /var/log/nginx \
+    /var/lib/nginx \
     && touch database/database.sqlite
 
 # Permissions
@@ -43,12 +44,23 @@ RUN chown -R www-data:www-data /var/www \
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
+# Clear Laravel cache
+RUN php artisan config:clear && \
+    php artisan route:clear && \
+    php artisan view:clear
+
 # Copy Nginx + Supervisor configs
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Create Nginx config symlink (some Nginx installations require this)
+RUN ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+# Test Nginx configuration
+RUN nginx -t
 
 # Expose HTTP
 EXPOSE 80
 
 # Start everything
-CMD ["/usr/bin/supervisord", "-n"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
