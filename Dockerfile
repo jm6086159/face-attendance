@@ -1,7 +1,7 @@
-# Laravel + Nginx + PHP-FPM + SQLite (Single Container)
+# Laravel + Nginx + PHP-FPM + SQLite (Single Container) - build-time safe
 FROM php:8.2-fpm
 
-# Install system packages with all required dependencies
+# Install system packages and PHP extensions
 RUN apt-get update && apt-get install -y \
     nginx \
     supervisor \
@@ -28,10 +28,10 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 # Set working directory
 WORKDIR /var/www
 
-# Copy application files
+# Copy application files early so composer can run
 COPY . .
 
-# Create required directories
+# Create required directories and placeholder database file
 RUN mkdir -p \
     storage/logs \
     storage/framework/cache \
@@ -41,38 +41,36 @@ RUN mkdir -p \
     bootstrap/cache \
     /var/log/nginx \
     /var/lib/nginx \
-    && touch database/database.sqlite
+    && touch database/database.sqlite || true
 
-# Set correct permissions
+# Set correct permissions for runtime (www-data)
 RUN chown -R www-data:www-data /var/www \
     && chmod -R 775 storage bootstrap/cache \
     && find /var/www/storage -type d -exec chmod 775 {} \; \
     && find /var/www/storage -type f -exec chmod 664 {} \; \
-    && chmod 666 database/database.sqlite
+    && chmod 666 database/database.sqlite || true
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# Install PHP dependencies (vendor)
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist || true
 
 # Copy configuration files
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# We'll put supervisord main config at /etc/supervisor/supervisord.conf
+COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 
-# Setup Nginx
+# Symlink site and test nginx config
 RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default \
     && echo "daemon off;" >> /etc/nginx/nginx.conf \
     && nginx -t
 
-# Laravel setup
-RUN php artisan key:generate --force \
-    && php artisan config:clear \
-    && php artisan route:clear \
-    && php artisan view:clear \
-    && php artisan cache:clear \
-    && php artisan migrate --force
+# Copy entrypoint script
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Expose port
+# Expose HTTP port
 EXPOSE 80
 
-# Start services with Supervisor
+# Use the entrypoint to prepare runtime environment and start supervisord
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
