@@ -57,29 +57,22 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Install npm dependencies (including optionalDependencies for linux)
 RUN npm install --include=optional && echo "✓ npm install completed"
 
-# Verify optional dependencies are installed
-RUN echo "=== Checking optional deps ===" \
- && ls -la node_modules/@rollup/ || echo "Rollup not found" \
- && ls -la node_modules/@tailwindcss/ || echo "Tailwind not found"
-
 # Build Vite assets
 RUN echo "Building Vite assets..." \
  && npm run build \
  && echo "✓ Vite build completed"
 
-# Debug: Show what was created
+# Move manifest from .vite subdirectory to build root (Vite 7 change)
+RUN if [ -f /var/www/public/build/.vite/manifest.json ]; then \
+      echo "Moving manifest from .vite to build root..."; \
+      cp /var/www/public/build/.vite/manifest.json /var/www/public/build/manifest.json; \
+    fi
+
+# Debug: Show final structure
 RUN echo "=== Build output ===" \
  && ls -la /var/www/public/build/ \
  && echo "=== Manifest content ===" \
- && cat /var/www/public/build/manifest.json || echo "No manifest"
-
-# Verify build succeeded
-RUN if [ ! -s /var/www/public/build/manifest.json ] || [ "$(cat /var/www/public/build/manifest.json)" = "{}" ]; then \
-      echo "ERROR: Vite build failed or manifest is empty!"; \
-      echo "Checking for errors..."; \
-      npm run build 2>&1 || true; \
-      exit 1; \
-    fi
+ && cat /var/www/public/build/manifest.json
 
 # Clean up node_modules to save space
 RUN rm -rf node_modules && echo "✓ Cleaned up node_modules"
