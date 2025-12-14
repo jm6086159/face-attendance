@@ -54,28 +54,30 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && echo "Node version: $(node --version)" \
  && echo "NPM version: $(npm --version)"
 
-# Install npm dependencies with clean install
-RUN npm ci --omit=dev || npm install
+# Install npm dependencies (including optionalDependencies for linux)
+RUN npm install --include=optional && echo "✓ npm install completed"
 
-# Ensure Vite is available
-RUN npx vite --version || npm install vite@latest
+# Verify optional dependencies are installed
+RUN echo "=== Checking optional deps ===" \
+ && ls -la node_modules/@rollup/ || echo "Rollup not found" \
+ && ls -la node_modules/@tailwindcss/ || echo "Tailwind not found"
 
-# Build Vite assets with explicit config
+# Build Vite assets
 RUN echo "Building Vite assets..." \
- && npx vite build --config vite.config.js \
+ && npm run build \
  && echo "✓ Vite build completed"
 
 # Debug: Show what was created
 RUN echo "=== Build output ===" \
- && ls -laR /var/www/public/build/ \
+ && ls -la /var/www/public/build/ \
  && echo "=== Manifest content ===" \
- && cat /var/www/public/build/manifest.json 2>/dev/null || echo "No manifest found"
+ && cat /var/www/public/build/manifest.json || echo "No manifest"
 
-# Verify critical files exist
-RUN if [ ! -s /var/www/public/build/manifest.json ]; then \
-      echo "ERROR: manifest.json is empty or missing!"; \
-      echo "=== Checking for CSS/JS files ==="; \
-      find /var/www/resources -name "app.css" -o -name "app.js"; \
+# Verify build succeeded
+RUN if [ ! -s /var/www/public/build/manifest.json ] || [ "$(cat /var/www/public/build/manifest.json)" = "{}" ]; then \
+      echo "ERROR: Vite build failed or manifest is empty!"; \
+      echo "Checking for errors..."; \
+      npm run build 2>&1 || true; \
       exit 1; \
     fi
 
