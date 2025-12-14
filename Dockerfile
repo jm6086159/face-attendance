@@ -47,11 +47,23 @@ RUN mkdir -p \
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # -----------------------------
+# Build Vite assets
+# -----------------------------
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y nodejs \
+ && npm install \
+ && npm run build \
+ && rm -rf node_modules
+
+# -----------------------------
 # Config files
 # -----------------------------
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
+
+# Fix PHP-FPM to disable IPv6
+RUN echo "listen.allowed_clients = 127.0.0.1" >> /usr/local/etc/php-fpm.d/www.conf
 
 # -----------------------------
 # Entrypoint script
