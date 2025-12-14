@@ -51,12 +51,24 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction
 # -----------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y nodejs \
- && npm install \
- && npm run build \
- && rm -rf node_modules
+ && echo "Node version: $(node --version)" \
+ && echo "NPM version: $(npm --version)"
+
+# Install npm dependencies
+RUN npm install && echo "✓ npm install completed"
+
+# Build Vite assets
+RUN npm run build && echo "✓ npm run build completed"
 
 # Verify build output exists
-RUN ls -la /var/www/public/build/ || echo "Warning: No build directory found"
+RUN if [ ! -f /var/www/public/build/manifest.json ]; then \
+      echo "ERROR: Vite build failed - manifest.json not found!"; \
+      ls -la /var/www/public/build/ || echo "build directory doesn't exist"; \
+      exit 1; \
+    fi
+
+# Clean up node_modules to save space
+RUN rm -rf node_modules && echo "✓ Cleaned up node_modules"
 
 # -----------------------------
 # Config files
