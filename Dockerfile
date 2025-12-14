@@ -5,7 +5,7 @@ FROM php:8.2-fpm
 # System dependencies
 # -----------------------------
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    nginx supervisor sqlite3 libsqlite3-dev \
+    nginx supervisor sqlite3 libsqlite3-dev gettext-base \
     libpng-dev libjpeg-dev libfreetype6-dev libonig-dev libxml2-dev libzip-dev \
     zip unzip git curl \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
@@ -33,12 +33,13 @@ RUN mkdir -p \
     storage/framework/cache \
     storage/framework/sessions \
     storage/framework/views \
+    storage/app/public \
     bootstrap/cache \
     database \
  && touch database/database.sqlite \
  && chown -R www-data:www-data /var/www \
  && chmod -R 775 storage bootstrap/cache database \
- && chmod 666 database/database.sqlite
+ && chmod 664 database/database.sqlite
 
 # -----------------------------
 # PHP dependencies
@@ -48,20 +49,27 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction
 # -----------------------------
 # Config files
 # -----------------------------
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
 
 # -----------------------------
+# Entrypoint script
+# -----------------------------
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# -----------------------------
 # Laravel prep (safe on Render)
 # -----------------------------
-RUN php artisan key:generate --force || true \
+RUN php artisan storage:link || true \
  && php artisan config:clear || true \
  && php artisan cache:clear || true \
  && php artisan route:clear || true \
  && php artisan view:clear || true
 
-# ❌ DO NOT expose 80 (Render injects $PORT)
-# ❌ DO NOT add daemon off to nginx.conf
+# Set PORT default (Render will override)
+ENV PORT=8080
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/usr/bin/supervisord","-n","-c","/etc/supervisor/conf.d/supervisord.conf"]
