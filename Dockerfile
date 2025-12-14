@@ -54,26 +54,29 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && echo "Node version: $(node --version)" \
  && echo "NPM version: $(npm --version)"
 
-# Install npm dependencies
-RUN npm install && echo "✓ npm install completed"
+# Install npm dependencies with clean install
+RUN npm ci --omit=dev || npm install
 
-# Build Vite assets with verbose output
-RUN echo "Starting Vite build..." \
- && npm run build -- --mode production 2>&1 | tee /tmp/vite-build.log \
+# Ensure Vite is available
+RUN npx vite --version || npm install vite@latest
+
+# Build Vite assets with explicit config
+RUN echo "Building Vite assets..." \
+ && npx vite build --config vite.config.js \
  && echo "✓ Vite build completed"
 
 # Debug: Show what was created
-RUN echo "=== Build output contents ===" \
+RUN echo "=== Build output ===" \
  && ls -laR /var/www/public/build/ \
- && echo "=== Checking for manifest ===" \
- && find /var/www/public/build -name "*.json" -type f
+ && echo "=== Manifest content ===" \
+ && cat /var/www/public/build/manifest.json 2>/dev/null || echo "No manifest found"
 
-# Verify build output exists OR create empty manifest for debugging
-RUN if [ ! -f /var/www/public/build/manifest.json ]; then \
-      echo "WARNING: manifest.json not found, checking .vite directory..."; \
-      cat /tmp/vite-build.log || true; \
-      echo "Creating placeholder manifest for debugging"; \
-      echo '{}' > /var/www/public/build/manifest.json; \
+# Verify critical files exist
+RUN if [ ! -s /var/www/public/build/manifest.json ]; then \
+      echo "ERROR: manifest.json is empty or missing!"; \
+      echo "=== Checking for CSS/JS files ==="; \
+      find /var/www/resources -name "app.css" -o -name "app.js"; \
+      exit 1; \
     fi
 
 # Clean up node_modules to save space
