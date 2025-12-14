@@ -47,13 +47,16 @@ RUN mkdir -p \
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # -----------------------------
-# Build Vite assets
+# Install Node.js and build Vite assets for production
 # -----------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y nodejs \
  && npm install \
  && npm run build \
  && rm -rf node_modules
+
+# Verify build output exists
+RUN ls -la /var/www/public/build/ || echo "Warning: No build directory found"
 
 # -----------------------------
 # Config files
