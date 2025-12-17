@@ -130,10 +130,23 @@ class RecognitionController extends Controller
         [$bestEmployee, $bestScore] = $this->findBestMatch($probe);
 
         // Tune this threshold with your data
-        $threshold = (float) config("services.recognition.threshold", 0.45);
+        $threshold = (float) config("services.recognition.threshold", 0.65);
 
-        $employeeId = ($bestScore >= $threshold) ? $bestEmployee?->id : null;
-        $empCode    = ($bestScore >= $threshold) ? $bestEmployee?->emp_code : null;
+        // Enforce liveness check when available
+        if (!($json['liveness_pass'] ?? false)) {
+            return response()->json(['message' => 'Liveness check failed.'], 422);
+        }
+
+        // Reject low-confidence matches explicitly
+        if ($bestScore < $threshold) {
+            return response()->json([
+                'message' => 'Face not recognized. Please register first.',
+                'confidence' => $bestScore,
+            ], 422);
+        }
+
+        $employeeId = $bestEmployee?->id;
+        $empCode    = $bestEmployee?->emp_code;
 
         // Load attendance schedule from settings with sensible defaults
         $now = Carbon::now();
