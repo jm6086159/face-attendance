@@ -41,6 +41,6 @@ return [
     ],
     // Face recognition tuning
     'recognition' => [
-        'threshold' => env('RECOGNITION_THRESHOLD', 0.45),
+        'threshold' => env('RECOGNITION_THRESHOLD', 0.65),
     ],
 ];
