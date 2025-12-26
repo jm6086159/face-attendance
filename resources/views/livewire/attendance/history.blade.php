@@ -1,4 +1,4 @@
-<div class="p-6 space-y-6 text-gray-900">
+<div class="p-6 space-y-6 text-black dark:text-gray-100">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
             <h1 class="text-2xl font-semibold text-white">Attendance History</h1>

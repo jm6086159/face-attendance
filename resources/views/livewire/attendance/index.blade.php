@@ -3,7 +3,7 @@
         <h1 class="text-xl font-semibold">Attendance Logs</h1>
     </div>
 
-    <div class="bg-white dark:bg-neutral-900 rounded-lg shadow p-4 space-y-4">
+    <div class="bg-white dark:bg-neutral-900 rounded-lg shadow p-4 space-y-4 text-black dark:text-gray-100">
         <div class="flex flex-wrap items-center gap-2">
             <input type="text" wire:model.debounce.300ms="q" placeholder="Search code/name" class="border rounded px-3 py-2 w-64 dark:bg-neutral-800 dark:border-neutral-700">
             <input type="date" wire:model="dateFrom" class="border rounded px-3 py-2 dark:bg-neutral-800 dark:border-neutral-700">
