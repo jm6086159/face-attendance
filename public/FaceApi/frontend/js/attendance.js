@@ -123,8 +123,9 @@ function error(msg) {
   statusDiv.textContent = msg;
 }
 function flash(msg, cls = 'text-secondary') {
-  // Keep sticky notice unless we explicitly clear it or it's a success
-  if (stickyNotice && cls !== 'text-success') {
+  // If we have a sticky notice and this is NOT a success/info message, keep showing sticky
+  // But if msg is explicitly empty or it's a success/info, allow the update
+  if (stickyNotice && msg !== '' && cls !== 'text-success' && cls !== 'text-info') {
     flashDiv.className = `small ${stickyClass}`;
     flashDiv.textContent = stickyNotice;
     return;
@@ -357,7 +358,10 @@ function startDetectionLoop() {
         const avgDistance = isStableMatch ? (stableRecognition.totalDistance / stableRecognition.count) : null;
 
         if (isStableMatch) {
+          // Clear any previous warning/error sticky notices on successful recognition
+          clearSticky();
           ok(`Ready: ${label} (avg dist ${avgDistance.toFixed(4)}, ${stableRecognition.count} frames)`);
+          flash(`Face recognized: ${label}`, 'text-success');
           setButtonsEnabled(true);
 
           if (AUTO_MODE) {
@@ -376,8 +380,10 @@ function startDetectionLoop() {
             }
           }
         } else if (isConfidentMatch) {
-          // Building confidence, show progress
+          // Building confidence, show progress - clear old sticky notices
+          clearSticky();
           status(`Verifying: ${label} (${stableRecognition.count}/${MIN_STABLE_FRAMES} frames)`);
+          flash(`Recognizing ${label}... hold steady`, 'text-info');
           setButtonsEnabled(false);
         } else if (passesThreshold && !passesMargin) {
           // Ambiguous match - could be multiple people
