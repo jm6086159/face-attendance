@@ -97,6 +97,40 @@
             font-size: 8px;
             color: #6b7280;
         }
+        .section-title {
+            background: #0f8b48;
+            color: white;
+            padding: 6px 10px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 8px;
+        }
+        .work-hours-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+        .work-hours-table th {
+            background: #1e40af;
+            color: white;
+            padding: 5px 3px;
+            text-align: center;
+            font-size: 7px;
+        }
+        .work-hours-table td {
+            padding: 4px 3px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 7px;
+            text-align: center;
+        }
+        .work-hours-table tr:nth-child(even) {
+            background: #f0f9ff;
+        }
+        .work-hours-table tfoot td {
+            background: #dbeafe;
+            font-weight: bold;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -187,6 +221,90 @@
             <div class="summary-hours">{{ $summary['total_overtime_hours'] ?? '0h 0m' }}</div>
         </div>
     </div>
+
+    {{-- Employee Work Hours Summary --}}
+    @if(isset($workHoursSummary) && $workHoursSummary->count() > 0)
+    <div class="section-title" style="background: #1e40af;">Employee Work Hours Summary</div>
+    <table class="work-hours-table">
+        <thead>
+            <tr>
+                <th style="text-align: left;">Employee</th>
+                <th style="text-align: left;">Dept</th>
+                <th>Present</th>
+                <th>Absent</th>
+                <th>Total Hours</th>
+                <th>Expected</th>
+                <th>Late</th>
+                <th>Undertime</th>
+                <th>Overtime</th>
+                <th>Attendance %</th>
+                <th>Efficiency %</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($workHoursSummary as $emp)
+            <tr>
+                <td style="text-align: left;">{{ $emp['employee_name'] }}<br><small style="color:#6b7280;">{{ $emp['emp_code'] }}</small></td>
+                <td style="text-align: left;">{{ $emp['department'] }}</td>
+                <td>{{ $emp['days_present'] }}/{{ $emp['total_work_days'] }}</td>
+                <td>{{ $emp['days_absent'] }}</td>
+                <td style="font-weight: bold;">{{ $emp['total_worked_hours'] ?? '00h 00m' }}</td>
+                <td>{{ $emp['expected_hours'] ?? '00h 00m' }}</td>
+                <td>{{ $emp['total_late_hours'] ?? '-' }}</td>
+                <td>{{ $emp['total_undertime_hours'] ?? '-' }}</td>
+                <td>{{ $emp['total_overtime_hours'] ?? '-' }}</td>
+                <td>{{ $emp['attendance_rate'] }}%</td>
+                <td>{{ $emp['efficiency_rate'] }}%</td>
+            </tr>
+            @endforeach
+        </tbody>
+        <tfoot>
+            <tr>
+                <td style="text-align: left;" colspan="2"><strong>Total ({{ $workHoursSummary->count() }} employees)</strong></td>
+                <td>{{ $workHoursSummary->sum('days_present') }}</td>
+                <td>{{ $workHoursSummary->sum('days_absent') }}</td>
+                <td style="font-weight: bold;">
+                    @php
+                        $totalMinutes = $workHoursSummary->sum('total_worked_minutes');
+                        $hours = intdiv($totalMinutes, 60);
+                        $mins = $totalMinutes % 60;
+                    @endphp
+                    {{ sprintf('%02dh %02dm', $hours, $mins) }}
+                </td>
+                <td>
+                    @php
+                        $totalExpected = $workHoursSummary->sum('expected_minutes');
+                        $expHours = intdiv($totalExpected, 60);
+                        $expMins = $totalExpected % 60;
+                    @endphp
+                    {{ sprintf('%02dh %02dm', $expHours, $expMins) }}
+                </td>
+                <td>
+                    @php
+                        $totalLate = $workHoursSummary->sum('total_late_minutes');
+                    @endphp
+                    {{ sprintf('%02dh %02dm', intdiv($totalLate, 60), $totalLate % 60) }}
+                </td>
+                <td>
+                    @php
+                        $totalUnder = $workHoursSummary->sum('total_undertime_minutes');
+                    @endphp
+                    {{ sprintf('%02dh %02dm', intdiv($totalUnder, 60), $totalUnder % 60) }}
+                </td>
+                <td>
+                    @php
+                        $totalOver = $workHoursSummary->sum('total_overtime_minutes');
+                    @endphp
+                    {{ sprintf('%02dh %02dm', intdiv($totalOver, 60), $totalOver % 60) }}
+                </td>
+                <td>{{ round($workHoursSummary->avg('attendance_rate'), 1) }}%</td>
+                <td>{{ round($workHoursSummary->avg('efficiency_rate'), 1) }}%</td>
+            </tr>
+        </tfoot>
+    </table>
+    @endif
+
+    <div class="section-title">Detailed Attendance Records</div>
 
     <table>
         <thead>

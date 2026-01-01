@@ -361,6 +361,132 @@ class AttendanceIssuesReport extends Component
         ];
     }
 
+    /**
+     * Get total work hours summary per employee for the selected period
+     */
+    public function getEmployeeWorkHoursSummary(): Collection
+    {
+        [$start, $end] = $this->resolveDateRange();
+        $cfg = $this->getScheduleConfig();
+        $workDays = $cfg['days'];
+        $expectedMinutesPerDay = $this->calculateExpectedMinutes();
+        
+        $employees = $this->getFilteredEmployees()->get();
+        
+        if ($employees->isEmpty()) {
+            return collect();
+        }
+        
+        $employeeIds = $employees->pluck('id');
+        $dates = $this->generateDateSeries($start, $end);
+        
+        // Count expected work days in the period
+        $totalWorkDays = $dates->filter(fn ($date) => in_array($date->dayOfWeekIso, $workDays))->count();
+        $totalExpectedMinutes = $totalWorkDays * $expectedMinutesPerDay;
+        
+        // Get all attendance logs for the period
+        $logs = AttendanceLog::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween(DB::raw('COALESCE(logged_at, created_at)'), [$start, $end])
+            ->orderBy('logged_at')
+            ->get();
+        
+        $summaries = collect();
+        
+        foreach ($employees as $employee) {
+            $employeeLogs = $logs->where('employee_id', $employee->id);
+            $logsByDate = $employeeLogs
+                ->sortBy('logged_at')
+                ->groupBy(fn ($log) => ($log->logged_at ?? $log->created_at)->toDateString());
+            
+            $totalWorkedMinutes = 0;
+            $daysPresent = 0;
+            $daysAbsent = 0;
+            $totalLateMinutes = 0;
+            $totalUndertimeMinutes = 0;
+            $totalOvertimeMinutes = 0;
+            
+            foreach ($dates as $date) {
+                $dayOfWeek = $date->dayOfWeekIso;
+                if (!in_array($dayOfWeek, $workDays)) {
+                    continue;
+                }
+                
+                $dateKey = $date->toDateString();
+                $dayLogs = $logsByDate->get($dateKey, collect())->sortBy('logged_at')->values();
+                
+                if ($dayLogs->isEmpty()) {
+                    $daysAbsent++;
+                    continue;
+                }
+                
+                $daysPresent++;
+                
+                $timeInLog = $dayLogs->firstWhere('action', 'time_in') ?? $dayLogs->first();
+                $timeOutLog = $dayLogs->filter(fn ($log) => $log->action === 'time_out')->last();
+                
+                if (!$timeOutLog && $dayLogs->count() > 1) {
+                    $timeOutLog = $dayLogs->last();
+                }
+                
+                // Calculate actual worked minutes for this day
+                $dayWorkedMinutes = 0;
+                if ($timeInLog && $timeOutLog) {
+                    $inTime = $timeInLog->logged_at ?? $timeInLog->created_at;
+                    $outTime = $timeOutLog->logged_at ?? $timeOutLog->created_at;
+                    
+                    if ($outTime->gt($inTime)) {
+                        $dayWorkedMinutes = $inTime->diffInMinutes($outTime);
+                    }
+                }
+                
+                $totalWorkedMinutes += $dayWorkedMinutes;
+                
+                // Calculate late
+                if ($timeInLog) {
+                    $actualIn = $timeInLog->logged_at ?? $timeInLog->created_at;
+                    $lateThreshold = $cfg['late_after'] ? Carbon::parse($cfg['late_after']) : Carbon::parse($cfg['in_end']);
+                    $thresholdTime = $date->copy()->setTimeFrom($lateThreshold)->addMinutes($cfg['late_grace']);
+                    
+                    if ($actualIn->gt($thresholdTime)) {
+                        $totalLateMinutes += $thresholdTime->diffInMinutes($actualIn);
+                    }
+                }
+                
+                // Calculate undertime/overtime
+                if ($dayWorkedMinutes < $expectedMinutesPerDay) {
+                    $totalUndertimeMinutes += ($expectedMinutesPerDay - $dayWorkedMinutes);
+                } elseif ($dayWorkedMinutes > $expectedMinutesPerDay) {
+                    $totalOvertimeMinutes += ($dayWorkedMinutes - $expectedMinutesPerDay);
+                }
+            }
+            
+            $summaries->push([
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->full_name,
+                'emp_code' => $employee->emp_code,
+                'department' => $employee->department ?? '-',
+                'days_present' => $daysPresent,
+                'days_absent' => $daysAbsent,
+                'total_work_days' => $totalWorkDays,
+                'total_worked_minutes' => $totalWorkedMinutes,
+                'total_worked_hours' => $this->formatDuration($totalWorkedMinutes),
+                'expected_minutes' => $totalExpectedMinutes,
+                'expected_hours' => $this->formatDuration($totalExpectedMinutes),
+                'total_late_minutes' => $totalLateMinutes,
+                'total_late_hours' => $this->formatDuration($totalLateMinutes),
+                'total_undertime_minutes' => $totalUndertimeMinutes,
+                'total_undertime_hours' => $this->formatDuration($totalUndertimeMinutes),
+                'total_overtime_minutes' => $totalOvertimeMinutes,
+                'total_overtime_hours' => $this->formatDuration($totalOvertimeMinutes),
+                'attendance_rate' => $totalWorkDays > 0 ? round(($daysPresent / $totalWorkDays) * 100, 1) : 0,
+                'efficiency_rate' => $totalExpectedMinutes > 0 ? round(($totalWorkedMinutes / $totalExpectedMinutes) * 100, 1) : 0,
+            ]);
+        }
+        
+        return $summaries->sortByDesc('total_worked_minutes')->values();
+    }
+
     public function exportExcel()
     {
         $records = $this->getAttendanceRecords();
@@ -391,10 +517,12 @@ class AttendanceIssuesReport extends Component
         }
 
         $summary = $this->buildSummary($records);
+        $workHoursSummary = $this->getEmployeeWorkHoursSummary();
 
         $pdf = Pdf::loadView('pdf.attendance-issues-report', [
             'records' => $records,
             'summary' => $summary,
+            'workHoursSummary' => $workHoursSummary,
             'filters' => [
                 'date_from' => $this->dateFrom,
                 'date_to' => $this->dateTo,
@@ -414,6 +542,7 @@ class AttendanceIssuesReport extends Component
     {
         $records = $this->getAttendanceRecords();
         $summary = $this->buildSummary($records);
+        $workHoursSummary = $this->getEmployeeWorkHoursSummary();
 
         $departments = Employee::distinct()->pluck('department')->filter()->sort()->values();
         $employees = Employee::orderBy('first_name')->orderBy('last_name')
@@ -423,6 +552,7 @@ class AttendanceIssuesReport extends Component
         return view('livewire.reports.attendance-issues-report', [
             'records' => $records,
             'summary' => $summary,
+            'workHoursSummary' => $workHoursSummary,
             'departments' => $departments,
             'employees' => $employees,
         ]);

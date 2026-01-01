@@ -104,6 +104,166 @@
         </div>
     </div>
 
+    {{-- Employee Work Hours Summary --}}
+    <div class="rounded-xl border border-blue-200 bg-blue-50 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 bg-blue-100 border-b border-blue-200">
+            <h2 class="text-lg font-semibold text-blue-900">Employee Work Hours Summary</h2>
+            <p class="text-xs text-blue-700">Total work hours per employee for the selected period ({{ \Carbon\Carbon::parse($dateFrom)->format('M d, Y') }} - {{ \Carbon\Carbon::parse($dateTo)->format('M d, Y') }})</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead class="bg-blue-100/50 text-blue-900">
+                    <tr>
+                        <th class="px-4 py-3 text-left font-medium">Employee</th>
+                        <th class="px-4 py-3 text-left font-medium">Department</th>
+                        <th class="px-4 py-3 text-center font-medium">Days Present</th>
+                        <th class="px-4 py-3 text-center font-medium">Days Absent</th>
+                        <th class="px-4 py-3 text-center font-medium">Total Work Hours</th>
+                        <th class="px-4 py-3 text-center font-medium">Expected Hours</th>
+                        <th class="px-4 py-3 text-center font-medium">Late</th>
+                        <th class="px-4 py-3 text-center font-medium">Undertime</th>
+                        <th class="px-4 py-3 text-center font-medium">Overtime</th>
+                        <th class="px-4 py-3 text-center font-medium">Attendance Rate</th>
+                        <th class="px-4 py-3 text-center font-medium">Efficiency</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-blue-100 bg-white">
+                    @forelse($workHoursSummary as $empSummary)
+                        <tr class="hover:bg-blue-50/50">
+                            <td class="px-4 py-3">
+                                <div class="font-medium text-gray-900">{{ $empSummary['employee_name'] }}</div>
+                                <div class="text-xs text-gray-500">{{ $empSummary['emp_code'] }}</div>
+                            </td>
+                            <td class="px-4 py-3 text-gray-700">{{ $empSummary['department'] }}</td>
+                            <td class="px-4 py-3 text-center">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    {{ $empSummary['days_present'] }} / {{ $empSummary['total_work_days'] }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @if($empSummary['days_absent'] > 0)
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                        {{ $empSummary['days_absent'] }}
+                                    </span>
+                                @else
+                                    <span class="text-gray-400">0</span>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span class="font-semibold text-blue-900">{{ $empSummary['total_worked_hours'] ?? '00h 00m' }}</span>
+                            </td>
+                            <td class="px-4 py-3 text-center text-gray-600">
+                                {{ $empSummary['expected_hours'] ?? '00h 00m' }}
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @if($empSummary['total_late_minutes'] > 0)
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                                        {{ $empSummary['total_late_hours'] }}
+                                    </span>
+                                @else
+                                    <span class="text-gray-400">-</span>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @if($empSummary['total_undertime_minutes'] > 0)
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                        {{ $empSummary['total_undertime_hours'] }}
+                                    </span>
+                                @else
+                                    <span class="text-gray-400">-</span>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @if($empSummary['total_overtime_minutes'] > 0)
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                        {{ $empSummary['total_overtime_hours'] }}
+                                    </span>
+                                @else
+                                    <span class="text-gray-400">-</span>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @php
+                                    $rate = $empSummary['attendance_rate'];
+                                    $rateColor = $rate >= 90 ? 'text-green-600' : ($rate >= 75 ? 'text-amber-600' : 'text-red-600');
+                                @endphp
+                                <span class="font-medium {{ $rateColor }}">{{ $rate }}%</span>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                @php
+                                    $eff = $empSummary['efficiency_rate'];
+                                    $effColor = $eff >= 100 ? 'text-green-600' : ($eff >= 90 ? 'text-amber-600' : 'text-red-600');
+                                @endphp
+                                <span class="font-medium {{ $effColor }}">{{ $eff }}%</span>
+                            </td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="11" class="px-4 py-6 text-center text-gray-500">
+                                No employees found for the selected filters.
+                            </td>
+                        </tr>
+                    @endforelse
+                </tbody>
+                @if($workHoursSummary->isNotEmpty())
+                <tfoot class="bg-blue-100/50 text-blue-900 font-medium">
+                    <tr>
+                        <td class="px-4 py-3" colspan="2">Total ({{ $workHoursSummary->count() }} employees)</td>
+                        <td class="px-4 py-3 text-center">{{ $workHoursSummary->sum('days_present') }}</td>
+                        <td class="px-4 py-3 text-center">{{ $workHoursSummary->sum('days_absent') }}</td>
+                        <td class="px-4 py-3 text-center font-bold">
+                            @php
+                                $totalMinutes = $workHoursSummary->sum('total_worked_minutes');
+                                $hours = intdiv($totalMinutes, 60);
+                                $mins = $totalMinutes % 60;
+                            @endphp
+                            {{ sprintf('%02dh %02dm', $hours, $mins) }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            @php
+                                $totalExpected = $workHoursSummary->sum('expected_minutes');
+                                $expHours = intdiv($totalExpected, 60);
+                                $expMins = $totalExpected % 60;
+                            @endphp
+                            {{ sprintf('%02dh %02dm', $expHours, $expMins) }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            @php
+                                $totalLate = $workHoursSummary->sum('total_late_minutes');
+                                $lateH = intdiv($totalLate, 60);
+                                $lateM = $totalLate % 60;
+                            @endphp
+                            {{ sprintf('%02dh %02dm', $lateH, $lateM) }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            @php
+                                $totalUnder = $workHoursSummary->sum('total_undertime_minutes');
+                                $underH = intdiv($totalUnder, 60);
+                                $underM = $totalUnder % 60;
+                            @endphp
+                            {{ sprintf('%02dh %02dm', $underH, $underM) }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            @php
+                                $totalOver = $workHoursSummary->sum('total_overtime_minutes');
+                                $overH = intdiv($totalOver, 60);
+                                $overM = $totalOver % 60;
+                            @endphp
+                            {{ sprintf('%02dh %02dm', $overH, $overM) }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            {{ $workHoursSummary->count() > 0 ? round($workHoursSummary->avg('attendance_rate'), 1) : 0 }}%
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            {{ $workHoursSummary->count() > 0 ? round($workHoursSummary->avg('efficiency_rate'), 1) : 0 }}%
+                        </td>
+                    </tr>
+                </tfoot>
+                @endif
+            </table>
+        </div>
+    </div>
+
     {{-- Records table --}}
     <div class="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div class="overflow-x-auto">
