@@ -40,7 +40,10 @@ return [
         ],
     ],
     // Face recognition tuning
+    // threshold: minimum cosine similarity to accept a match (0.75 = strict, 0.65 = lenient)
+    // margin: minimum gap between best and second-best match to avoid false positives
     'recognition' => [
-        'threshold' => env('RECOGNITION_THRESHOLD', 0.65),
+        'threshold' => env('RECOGNITION_THRESHOLD', 0.75),
+        'margin' => env('RECOGNITION_MARGIN', 0.08),
     ],
 ];

@@ -127,16 +127,32 @@ class RecognitionController extends Controller
             }
             $probe = $json['embedding'];
         }
-        [$bestEmployee, $bestScore] = $this->findBestMatch($probe);
+        // Find best match with margin-based rejection to prevent false positives
+        [$bestEmployee, $bestScore, $secondBestScore, $matchDetails] = $this->findBestMatchWithMargin($probe);
 
-        // Tune this threshold with your data
-        $threshold = (float) config("services.recognition.threshold", 0.65);
+        // Tune these thresholds with your data
+        $threshold = (float) config("services.recognition.threshold", 0.75);
+        $marginRequired = (float) config("services.recognition.margin", 0.08);
         
-        // Reject low-confidence matches explicitly
+        // Calculate confidence gap between best and second-best match
+        $margin = $bestScore - $secondBestScore;
+        
+        // Reject if below threshold
         if ($bestScore < $threshold) {
             return response()->json([
                 'message' => 'Face not recognized. Please register first.',
                 'confidence' => $bestScore,
+                'threshold' => $threshold,
+            ], 422);
+        }
+        
+        // Reject if margin is too small (ambiguous match - could be multiple people)
+        if ($margin < $marginRequired && $secondBestScore > 0.5) {
+            return response()->json([
+                'message' => 'Face recognition ambiguous. Please try again with better lighting.',
+                'confidence' => $bestScore,
+                'margin' => $margin,
+                'margin_required' => $marginRequired,
             ], 422);
         }
 
@@ -330,22 +346,72 @@ class RecognitionController extends Controller
 
     /* -------------------------- internal helpers -------------------------- */
 
-    private function findBestMatch(array $probe): array
+    /**
+     * Find the best matching employee with margin-based confidence.
+     * Returns [bestEmployee, bestScore, secondBestScore, matchDetails]
+     * 
+     * For employees with multiple templates, we take the max score per employee
+     * to handle pose/lighting variations. The margin between best and second-best
+     * employee helps reject ambiguous matches.
+     */
+    private function findBestMatchWithMargin(array $probe): array
     {
-        $best = null;
-        $bestScore = -1.0;
+        // Group scores by employee_id to handle multiple templates per employee
+        $employeeScores = [];
+        $employeeRefs = [];
 
-        FaceTemplate::with('employee:id,emp_code')->chunk(300, function ($chunk) use (&$best, &$bestScore, $probe) {
-            foreach ($chunk as $tpl) {
-                $score = $this->cosine($probe, $tpl->embedding ?? []);
-                if ($score > $bestScore) {
-                    $bestScore = $score;
-                    $best = $tpl->employee;
+        FaceTemplate::with('employee:id,emp_code')
+            ->whereNotNull('embedding')
+            ->chunk(300, function ($chunk) use (&$employeeScores, &$employeeRefs, $probe) {
+                foreach ($chunk as $tpl) {
+                    $embedding = $tpl->embedding ?? [];
+                    if (empty($embedding) || count($embedding) < 64) {
+                        continue; // Skip invalid embeddings
+                    }
+                    
+                    $score = $this->cosine($probe, $embedding);
+                    $empId = $tpl->employee_id;
+                    
+                    if (!isset($employeeScores[$empId])) {
+                        $employeeScores[$empId] = [];
+                        $employeeRefs[$empId] = $tpl->employee;
+                    }
+                    
+                    $employeeScores[$empId][] = $score;
                 }
-            }
-        });
+            });
 
-        return [$best, $bestScore];
+        if (empty($employeeScores)) {
+            return [null, -1.0, -1.0, []];
+        }
+
+        // For each employee, use the MAX score across their templates
+        // This handles different poses/lighting in registered images
+        $aggregatedScores = [];
+        foreach ($employeeScores as $empId => $scores) {
+            $aggregatedScores[$empId] = max($scores);
+        }
+
+        // Sort by score descending
+        arsort($aggregatedScores);
+        $sortedIds = array_keys($aggregatedScores);
+
+        $bestId = $sortedIds[0] ?? null;
+        $bestScore = $aggregatedScores[$bestId] ?? -1.0;
+        $secondBestScore = isset($sortedIds[1]) ? $aggregatedScores[$sortedIds[1]] : -1.0;
+
+        $bestEmployee = $bestId ? ($employeeRefs[$bestId] ?? null) : null;
+
+        return [
+            $bestEmployee,
+            $bestScore,
+            $secondBestScore,
+            [
+                'total_employees' => count($employeeScores),
+                'best_id' => $bestId,
+                'template_count' => isset($employeeScores[$bestId]) ? count($employeeScores[$bestId]) : 0,
+            ]
+        ];
     }
 
     private function cosine(array $a, array $b): float

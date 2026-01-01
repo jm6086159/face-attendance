@@ -16,16 +16,19 @@ const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.2
 // Laravel API endpoints
 const KNOWN_FACES_URL  = '/api/face-embeddings';
 const MARK_ATT_URL     = '/api/recognize-proxy';
-// Client-side recognition uses Euclidean distance; a typical good
-// threshold is ~0.6. The server uses cosine similarity with 0.45.
-const MATCH_THRESHOLD  = 0.60;
+// Client-side recognition uses Euclidean distance.
+// Lower values = stricter matching. Typical face-api.js threshold is 0.5-0.6
+// We use 0.50 to reduce false positives.
+const MATCH_THRESHOLD  = 0.50;
+const MARGIN_THRESHOLD = 0.08; // Minimum gap between best and second-best match
 const AUTO_MODE        = true; // Automatically mark attendance when confident
 const AUTO_COOLDOWN_MS = 12000; // prevent double-marks within this window
+const MIN_STABLE_FRAMES = 4; // Require consistent recognition across multiple frames
 // ====================
 
 let labels = [];           // ['John Doe', ...]
 let descriptors = [];      // [Float32Array(128), ...]
-let bestMatch = { label: null, distance: null };
+let bestMatch = { label: null, distance: null, margin: null };
 let currentDescriptor = null; // latest Float32Array from largest face
 let isMarking = false;
 let lastMarkTs = 0;
@@ -33,6 +36,8 @@ let lastMarkedLabel = null;
 let detectionLoopStarted = false;
 let stickyNotice = null; // persistent warning until attendance is marked
 let stickyClass = 'text-warning';
+// Multi-frame validation: track consecutive recognitions of same person
+let stableRecognition = { label: null, count: 0, totalDistance: 0 };
 const soundTimeIn = new Audio('/FaceApi/frontend/sounds/time_in.wav');
 const soundTimeOut = new Audio('/FaceApi/frontend/sounds/time_out.wav');
 soundTimeIn.preload = 'auto';
@@ -298,6 +303,8 @@ function startDetectionLoop() {
         whoDiv.textContent  = '--';
         distDiv.textContent = '--';
         setButtonsEnabled(false);
+        // Reset stable recognition when no face
+        stableRecognition = { label: null, count: 0, totalDistance: 0 };
       } else {
         if (resized.length > 1) {
           flash(`Multiple faces detected (${resized.length}). Using the largest face.`, 'text-warning');
@@ -314,14 +321,34 @@ function startDetectionLoop() {
         const d = largest.descriptor;
         currentDescriptor = d; // keep for server marking
 
-        const { label, distance } = findBestMatch(d);
-        bestMatch = { label, distance };
+        const { label, distance, margin } = findBestMatch(d);
+        bestMatch = { label, distance, margin };
 
         whoDiv.textContent  = label || 'Unknown';
         distDiv.textContent = (distance != null) ? distance.toFixed(4) : '--';
 
-        if (label && distance <= MATCH_THRESHOLD) {
-          ok(`Ready: ${label} (distance ${distance.toFixed(4)})`);
+        // Check if match passes both threshold AND margin requirements
+        const passesThreshold = label && distance <= MATCH_THRESHOLD;
+        const passesMargin = margin === null || margin >= MARGIN_THRESHOLD;
+        const isConfidentMatch = passesThreshold && passesMargin;
+
+        // Multi-frame validation: track consecutive recognitions
+        if (isConfidentMatch && label === stableRecognition.label) {
+          stableRecognition.count++;
+          stableRecognition.totalDistance += distance;
+        } else if (isConfidentMatch) {
+          // New confident match, reset counter
+          stableRecognition = { label, count: 1, totalDistance: distance };
+        } else {
+          // Not confident, reset
+          stableRecognition = { label: null, count: 0, totalDistance: 0 };
+        }
+
+        const isStableMatch = stableRecognition.count >= MIN_STABLE_FRAMES;
+        const avgDistance = isStableMatch ? (stableRecognition.totalDistance / stableRecognition.count) : null;
+
+        if (isStableMatch) {
+          ok(`Ready: ${label} (avg dist ${avgDistance.toFixed(4)}, ${stableRecognition.count} frames)`);
           setButtonsEnabled(true);
 
           if (AUTO_MODE) {
@@ -334,27 +361,27 @@ function startDetectionLoop() {
                 isMarking = false;
                 lastMarkTs = Date.now();
                 lastMarkedLabel = label;
+                // Reset stable recognition after marking
+                stableRecognition = { label: null, count: 0, totalDistance: 0 };
               });
             }
           }
+        } else if (isConfidentMatch) {
+          // Building confidence, show progress
+          status(`Verifying: ${label} (${stableRecognition.count}/${MIN_STABLE_FRAMES} frames)`);
+          setButtonsEnabled(false);
+        } else if (passesThreshold && !passesMargin) {
+          // Ambiguous match - could be multiple people
+          status('Face similar to multiple people. Please adjust position.');
+          setSticky('Recognition ambiguous. Move closer or adjust lighting.', 'text-warning');
+          setButtonsEnabled(false);
         } else {
-          status('Face detected but not confidently recognized yet.');
-          setSticky('Face detected but not confidently recognized yet. Please hold steady until recognized.', 'text-warning');
+          status('Face detected but not recognized.');
+          setSticky('Face not recognized. If you are registered, try better lighting.', 'text-warning');
           setButtonsEnabled(false);
 
-          // Fallback: still ask the server to recognize once per cooldown.
-          if (AUTO_MODE && resized.length > 0) {
-            const now = Date.now();
-            const onCooldown = now - lastMarkTs < AUTO_COOLDOWN_MS;
-            if (!isMarking && !onCooldown) {
-              isMarking = true;
-              doMark('AUTO').finally(() => {
-                isMarking = false;
-                lastMarkTs = Date.now();
-                lastMarkedLabel = null;
-              });
-            }
-          }
+          // DO NOT send unrecognized faces to server in AUTO mode
+          // This prevents false positives from unknown faces
         }
       }
     } catch (e) {
@@ -368,32 +395,60 @@ function startDetectionLoop() {
 }
 
 function findBestMatch(queryDescr /* Float32Array */) {
-  if (!descriptors.length) return { label: null, distance: null };
+  if (!descriptors.length) return { label: null, distance: null, margin: null };
 
   let bestIdx = -1;
   let bestDist = Infinity;
+  let secondBestDist = Infinity;
+  
   for (let i = 0; i < descriptors.length; i++) {
     const dist = faceapi.euclideanDistance(queryDescr, descriptors[i]);
     if (dist < bestDist) {
+      secondBestDist = bestDist;
       bestDist = dist;
       bestIdx = i;
+    } else if (dist < secondBestDist) {
+      secondBestDist = dist;
     }
   }
+  
   const label = (bestIdx >= 0) ? labels[bestIdx] : null;
-  return { label, distance: bestDist };
+  // Margin: how much better is the best match vs second-best
+  // Higher margin = more confident the match is correct
+  const margin = secondBestDist - bestDist;
+  
+  return { label, distance: bestDist, margin };
 }
 
 async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
   try {
-    if (!bestMatch.label && action !== 'AUTO') {
-      flash('No recognized face yet. Try facing the camera and click Retry.', 'text-danger');
+    // Strict validation: reject if no confident match
+    if (!bestMatch.label) {
+      if (action !== 'AUTO') {
+        flash('No recognized face yet. Try facing the camera and click Retry.', 'text-danger');
+      }
       return;
     }
-    if (action !== 'AUTO') {
-      if (bestMatch.distance == null || bestMatch.distance > MATCH_THRESHOLD) {
+    
+    // Check threshold
+    if (bestMatch.distance == null || bestMatch.distance > MATCH_THRESHOLD) {
+      if (action !== 'AUTO') {
         flash(`Recognition not confident (distance ${bestMatch.distance?.toFixed(4) ?? '--'}).`, 'text-danger');
-        return;
       }
+      return;
+    }
+    
+    // Check margin - reject ambiguous matches
+    if (bestMatch.margin !== null && bestMatch.margin < MARGIN_THRESHOLD) {
+      if (action !== 'AUTO') {
+        flash('Match is ambiguous. Please adjust your position.', 'text-danger');
+      }
+      return;
+    }
+    
+    // For AUTO mode, require stable multi-frame recognition
+    if (action === 'AUTO' && stableRecognition.count < MIN_STABLE_FRAMES) {
+      return; // Still building confidence, don't mark yet
     }
 
     // Get CSRF token
