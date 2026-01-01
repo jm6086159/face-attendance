@@ -37,7 +37,7 @@
             <div class="p-3 border rounded bg-white">
               <div class="small sfa-muted">Recognized:</div>
               <div id="who" class="fw-semibold">--</div>
-              <div class="small sfa-muted">Distance (lower is better):</div>
+              <div class="small sfa-muted">Distance (must be ≤ 0.50):</div>
               <div id="distance" class="small">--</div>
             </div>
           </div>
@@ -56,8 +56,9 @@
         <h5 class="card-title mb-2">Tips</h5>
         <ul class="small text-muted mb-0">
           <li>Make sure lighting is good and your face is centered.</li>
-          <li>Recognition uses the closest match among known faces loaded from the server.</li>
-          <li>Set a threshold (e.g. <code>0.5</code>) to decide if the match is confident.</li>
+          <li>Recognition requires a distance of <strong>0.50 or lower</strong> to match.</li>
+          <li>Unknown faces will show "Unknown" - they cannot mark attendance.</li>
+          <li>Hold steady for a few seconds while the system verifies your identity.</li>
         </ul>
       </div>
     </div>
