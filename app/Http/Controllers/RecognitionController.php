@@ -127,15 +127,41 @@ class RecognitionController extends Controller
             }
             $probe = $json['embedding'];
         }
-        [$bestEmployee, $bestScore] = $this->findBestMatch($probe);
-
-        // Tune this threshold with your data
-        $threshold = (float) config("services.recognition.threshold", 0.65);
         
-        // Reject low-confidence matches explicitly
-        if ($bestScore < $threshold) {
+        // Improved matching with secondary verification
+        [$bestEmployee, $bestScore, $secondBestScore, $matchCount] = $this->findBestMatch($probe);
+
+        // Get threshold from settings or config (increased default from 0.65 to 0.72)
+        $recognitionSettings = Setting::getCached('recognition.settings', [
+            'threshold' => 0.72,
+            'require_liveness' => false,
+        ]);
+        $threshold = (float) ($recognitionSettings['threshold'] ?? config("services.recognition.threshold", 0.72));
+        $requireLiveness = (bool) ($recognitionSettings['require_liveness'] ?? false);
+        
+        // Validate the match with improved accuracy checks
+        [$isValid, $matchType, $rejectReason] = $this->validateMatch($bestScore, $secondBestScore, $threshold);
+        
+        // Reject invalid matches
+        if (!$isValid) {
             return response()->json([
-                'message' => 'Face not recognized. Please register first.',
+                'message' => 'Face not recognized. Please register first or try again.',
+                'confidence' => $bestScore,
+                'reason' => $matchType,
+                'debug' => [
+                    'best_score' => $bestScore,
+                    'second_best_score' => $secondBestScore,
+                    'threshold' => $threshold,
+                    'candidates' => $matchCount,
+                ],
+            ], 422);
+        }
+        
+        // Optional liveness check (if enabled and available from FastAPI or frontend)
+        $livenessPass = (bool)($json['liveness_pass'] ?? $req->input('liveness_pass', false));
+        if ($requireLiveness && !$livenessPass) {
+            return response()->json([
+                'message' => 'Liveness check failed. Please use a real face, not a photo.',
                 'confidence' => $bestScore,
             ], 422);
         }
@@ -330,22 +356,82 @@ class RecognitionController extends Controller
 
     /* -------------------------- internal helpers -------------------------- */
 
+    /**
+     * Find the best matching employee with improved accuracy.
+     * Returns [Employee|null, bestScore, secondBestScore, matchCount]
+     */
     private function findBestMatch(array $probe): array
     {
-        $best = null;
-        $bestScore = -1.0;
+        $matches = [];
 
-        FaceTemplate::with('employee:id,emp_code')->chunk(300, function ($chunk) use (&$best, &$bestScore, $probe) {
+        FaceTemplate::with('employee:id,emp_code')->chunk(300, function ($chunk) use (&$matches, $probe) {
             foreach ($chunk as $tpl) {
+                if (!$tpl->employee) continue;
+                
                 $score = $this->cosine($probe, $tpl->embedding ?? []);
-                if ($score > $bestScore) {
-                    $bestScore = $score;
-                    $best = $tpl->employee;
+                if ($score > 0) {
+                    $empId = $tpl->employee->id;
+                    // Keep the best score per employee (they may have multiple templates)
+                    if (!isset($matches[$empId]) || $score > $matches[$empId]['score']) {
+                        $matches[$empId] = [
+                            'employee' => $tpl->employee,
+                            'score' => $score,
+                        ];
+                    }
                 }
             }
         });
 
-        return [$best, $bestScore];
+        if (empty($matches)) {
+            return [null, -1.0, -1.0, 0];
+        }
+
+        // Sort by score descending
+        usort($matches, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        $best = $matches[0];
+        $secondBest = $matches[1] ?? null;
+
+        return [
+            $best['employee'],
+            $best['score'],
+            $secondBest ? $secondBest['score'] : -1.0,
+            count($matches)
+        ];
+    }
+
+    /**
+     * Validate that the match is confident and distinct from other candidates.
+     * This prevents false positives when an unknown face partially matches multiple people.
+     */
+    private function validateMatch(float $bestScore, float $secondBestScore, float $threshold): array
+    {
+        // Primary check: must exceed threshold
+        if ($bestScore < $threshold) {
+            return [false, 'below_threshold', "Score {$bestScore} is below threshold {$threshold}"];
+        }
+
+        // Secondary check: must be significantly better than second-best match
+        // This prevents matching unknown faces that score similarly across multiple people
+        $minGap = 0.08; // Require at least 8% gap between best and second-best
+        if ($secondBestScore > 0) {
+            $gap = $bestScore - $secondBestScore;
+            if ($gap < $minGap && $bestScore < ($threshold + 0.15)) {
+                return [false, 'ambiguous_match', "Ambiguous: gap between top matches is only {$gap}"];
+            }
+        }
+
+        // High confidence check: very high scores are always accepted
+        if ($bestScore >= 0.85) {
+            return [true, 'high_confidence', null];
+        }
+
+        // Medium confidence with good separation
+        if ($bestScore >= $threshold && ($secondBestScore < 0 || ($bestScore - $secondBestScore) >= $minGap)) {
+            return [true, 'confident', null];
+        }
+
+        return [true, 'marginal', null];
     }
 
     private function cosine(array $a, array $b): float
