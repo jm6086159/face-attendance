@@ -1,4 +1,4 @@
-// js/attendance.js - Improved with liveness detection and better accuracy
+// js/attendance.js
 
 const video     = document.getElementById('video');
 const canvas    = document.getElementById('overlay');
@@ -11,35 +11,21 @@ const btnIn     = document.getElementById('btnCheckIn');
 const btnOut    = document.getElementById('btnCheckOut');
 const btnRetry  = document.getElementById('btnRetry');
 
-// ====== IMPROVED CONFIG ======
+// ====== CONFIG ======
 const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 // Laravel API endpoints
 const KNOWN_FACES_URL  = '/api/face-embeddings';
 const MARK_ATT_URL     = '/api/recognize-proxy';
-
-// IMPROVED: Stricter thresholds for better accuracy
-// Client-side uses Euclidean distance (lower is better, 0 = perfect match)
-const MATCH_THRESHOLD  = 0.50;   // Stricter - was 0.60
-const SECONDARY_GAP    = 0.08;   // Minimum gap between best and second-best match
-const AUTO_MODE        = true; 
-const AUTO_COOLDOWN_MS = 12000;
-
-// IMPROVED: Face quality requirements
-const MIN_FACE_SIZE    = 80;     // Minimum face width in pixels
-const MIN_CONFIDENCE   = 0.80;   // Minimum detection confidence score
-const REQUIRE_CENTERED = true;   // Face must be roughly centered
-
-// IMPROVED: Liveness detection settings
-const LIVENESS_ENABLED = true;
-const BLINK_DETECTION  = true;
-const MOVEMENT_CHECK   = true;
-const MOVEMENT_FRAMES  = 10;     // Number of frames to check for movement
+// Client-side recognition uses Euclidean distance; a typical good
+// threshold is ~0.6. The server uses cosine similarity with 0.45.
+const MATCH_THRESHOLD  = 0.60;
+const AUTO_MODE        = true; // Automatically mark attendance when confident
+const AUTO_COOLDOWN_MS = 12000; // prevent double-marks within this window
 // ====================
 
 let labels = [];           // ['John Doe', ...]
 let descriptors = [];      // [Float32Array(128), ...]
-let employeeIds = [];      // Store employee IDs for each face
-let bestMatch = { label: null, distance: null, employeeId: null, isConfident: false };
+let bestMatch = { label: null, distance: null };
 let currentDescriptor = null; // latest Float32Array from largest face
 let isMarking = false;
 let lastMarkTs = 0;
@@ -47,13 +33,6 @@ let lastMarkedLabel = null;
 let detectionLoopStarted = false;
 let stickyNotice = null; // persistent warning until attendance is marked
 let stickyClass = 'text-warning';
-
-// Liveness detection state
-let faceHistory = [];      // Store recent face positions for movement detection
-let blinkState = { eyesClosed: false, blinkCount: 0, lastBlinkTime: 0 };
-let livenessScore = 0;
-let livenessChecks = { movement: false, blink: false, faceQuality: false };
-
 const soundTimeIn = new Audio('/FaceApi/frontend/sounds/time_in.wav');
 const soundTimeOut = new Audio('/FaceApi/frontend/sounds/time_out.wav');
 soundTimeIn.preload = 'auto';
@@ -75,8 +54,6 @@ setButtonsEnabled(false);
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
       faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-      // Additional model for liveness detection (expressions help detect real faces)
-      faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
     ]);
 
     // If the model URL 404’d and got cached, this is a common failure point.
@@ -95,15 +72,7 @@ setButtonsEnabled(false);
       throw new Error('Camera access is not supported in this browser.');
     }
 
-    // Request higher resolution for better accuracy
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { 
-        facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }, 
-      audio: false 
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
     video.srcObject = stream;
     await ensureVideoReady();
     startDetectionLoop();
@@ -119,24 +88,16 @@ setButtonsEnabled(false);
 function attachHandlers() {
   if (btnRetry) {
     btnRetry.addEventListener('click', () => {
-      bestMatch = { label: null, distance: null, employeeId: null, isConfident: false };
+      bestMatch = { label: null, distance: null };
       whoDiv.textContent  = '--';
       distDiv.textContent = '--';
       flash('');
-      resetLivenessState();
       setButtonsEnabled(false);
     });
   }
 
   if (btnIn) btnIn.addEventListener('click', () => doMark('IN'));
   if (btnOut) btnOut.addEventListener('click', () => doMark('OUT'));
-}
-
-function resetLivenessState() {
-  faceHistory = [];
-  blinkState = { eyesClosed: false, blinkCount: 0, lastBlinkTime: 0 };
-  livenessScore = 0;
-  livenessChecks = { movement: false, blink: false, faceQuality: false };
 }
 
 function setButtonsEnabled(enabled) {
@@ -244,7 +205,7 @@ async function getJson(url, options) {
 }
 
 async function loadKnownFaces() {
-  // Expect: [{label, descriptor:[128 floats], employee_id}] OR {"John":[...], "Jane":[...]}
+  // Expect: [{label, descriptor:[128 floats]}] OR {"John":[...], "Jane":[...]}
   const data = await getJson(KNOWN_FACES_URL, { headers: { 'Accept': 'application/json' } });
 
   console.log('Loaded face data:', data);
@@ -258,7 +219,6 @@ async function loadKnownFaces() {
 
   labels = [];
   descriptors = [];
-  employeeIds = [];
 
   for (const item of items) {
     if (!item || !item.label || !Array.isArray(item.descriptor)) {
@@ -272,7 +232,6 @@ async function loadKnownFaces() {
     }
     labels.push(item.label);
     descriptors.push(f32);
-    employeeIds.push(item.employee_id || null);
   }
 
   console.log(`Loaded ${labels.length} face templates:`, labels);
@@ -322,10 +281,7 @@ function startDetectionLoop() {
   const tick = async () => {
     try {
       const dets = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({
-          inputSize: 416,      // Higher resolution for better accuracy
-          scoreThreshold: 0.5  // Filter out low-confidence detections
-        }))
+        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
         .withFaceDescriptors();
 
@@ -342,7 +298,6 @@ function startDetectionLoop() {
         whoDiv.textContent  = '--';
         distDiv.textContent = '--';
         setButtonsEnabled(false);
-        resetLivenessState();
       } else {
         if (resized.length > 1) {
           flash(`Multiple faces detected (${resized.length}). Using the largest face.`, 'text-warning');
@@ -356,73 +311,50 @@ function startDetectionLoop() {
           const areaB = b.detection.box.width * b.detection.box.height;
           return areaB > areaA ? b : a;
         });
-
-        // IMPROVED: Check face quality
-        const quality = checkFaceQuality(largest, displaySize);
-        livenessChecks.faceQuality = quality.isValid;
-        
-        if (!quality.isValid) {
-          status(quality.issues.join('. '));
-          setSticky(quality.issues.join('. '), 'text-warning');
-          setButtonsEnabled(false);
-          requestAnimationFrame(tick);
-          return;
-        }
-        
-        // IMPROVED: Update liveness checks
-        if (LIVENESS_ENABLED) {
-          updateMovementHistory(largest);
-          checkBlink(largest.landmarks);
-        }
-
         const d = largest.descriptor;
         currentDescriptor = d; // keep for server marking
 
-        // IMPROVED: Find best match with secondary verification
-        const matchResult = findBestMatchImproved(d);
-        bestMatch = matchResult;
+        const { label, distance } = findBestMatch(d);
+        bestMatch = { label, distance };
 
-        whoDiv.textContent  = matchResult.label || 'Unknown';
-        distDiv.textContent = (matchResult.distance != null) ? matchResult.distance.toFixed(4) : '--';
+        whoDiv.textContent  = label || 'Unknown';
+        distDiv.textContent = (distance != null) ? distance.toFixed(4) : '--';
 
-        // IMPROVED: Check if match is confident enough
-        if (matchResult.isConfident) {
-          const livenessOk = !LIVENESS_ENABLED || calculateLivenessScore() >= 0.5;
-          
-          if (!livenessOk) {
-            status('Verifying you are a real person... Please blink naturally.');
-            setSticky('Liveness check in progress. Please blink and move slightly.', 'text-info');
-            setButtonsEnabled(false);
-          } else {
-            ok(`Ready: ${matchResult.label} (distance ${matchResult.distance.toFixed(4)})`);
-            clearSticky();
-            setButtonsEnabled(true);
+        if (label && distance <= MATCH_THRESHOLD) {
+          ok(`Ready: ${label} (distance ${distance.toFixed(4)})`);
+          setButtonsEnabled(true);
 
-            if (AUTO_MODE) {
-              const now = Date.now();
-              const onCooldown = now - lastMarkTs < AUTO_COOLDOWN_MS;
-              const sameAsLast = lastMarkedLabel && lastMarkedLabel === matchResult.label;
-              if (!isMarking && (!onCooldown || !sameAsLast)) {
-                isMarking = true;
-                doMark('AUTO').finally(() => {
-                  isMarking = false;
-                  lastMarkTs = Date.now();
-                  lastMarkedLabel = matchResult.label;
-                  resetLivenessState();
-                });
-              }
+          if (AUTO_MODE) {
+            const now = Date.now();
+            const onCooldown = now - lastMarkTs < AUTO_COOLDOWN_MS;
+            const sameAsLast = lastMarkedLabel && lastMarkedLabel === label;
+            if (!isMarking && (!onCooldown || !sameAsLast)) {
+              isMarking = true;
+              doMark('AUTO').finally(() => {
+                isMarking = false;
+                lastMarkTs = Date.now();
+                lastMarkedLabel = label;
+              });
             }
           }
         } else {
-          if (matchResult.reason === 'ambiguous') {
-            status('Face detected but match is ambiguous. Please try again.');
-            setSticky('Multiple possible matches detected. Please face the camera directly.', 'text-warning');
-          } else {
-            status('Face detected but not recognized.');
-            setSticky('Face not recognized or low confidence. Please try again.', 'text-warning');
-          }
+          status('Face detected but not confidently recognized yet.');
+          setSticky('Face detected but not confidently recognized yet. Please hold steady until recognized.', 'text-warning');
           setButtonsEnabled(false);
-          // REMOVED: Fallback auto-recognition that was causing false positives
+
+          // Fallback: still ask the server to recognize once per cooldown.
+          if (AUTO_MODE && resized.length > 0) {
+            const now = Date.now();
+            const onCooldown = now - lastMarkTs < AUTO_COOLDOWN_MS;
+            if (!isMarking && !onCooldown) {
+              isMarking = true;
+              doMark('AUTO').finally(() => {
+                isMarking = false;
+                lastMarkTs = Date.now();
+                lastMarkedLabel = null;
+              });
+            }
+          }
         }
       }
     } catch (e) {
@@ -433,203 +365,6 @@ function startDetectionLoop() {
   };
 
   requestAnimationFrame(tick);
-}
-
-// IMPROVED: Check face quality
-function checkFaceQuality(detection, displaySize) {
-  const box = detection.detection.box;
-  const issues = [];
-  
-  // Check face size
-  if (box.width < MIN_FACE_SIZE || box.height < MIN_FACE_SIZE) {
-    issues.push('Face too small - move closer');
-  }
-  
-  // Check detection confidence
-  if (detection.detection.score < MIN_CONFIDENCE) {
-    issues.push('Low detection confidence');
-  }
-  
-  // Check if face is centered (within middle 60% of frame)
-  if (REQUIRE_CENTERED) {
-    const centerX = box.x + box.width / 2;
-    const centerY = box.y + box.height / 2;
-    const marginX = displaySize.width * 0.2;
-    const marginY = displaySize.height * 0.2;
-    
-    if (centerX < marginX || centerX > displaySize.width - marginX ||
-        centerY < marginY || centerY > displaySize.height - marginY) {
-      issues.push('Center your face in the frame');
-    }
-  }
-  
-  return {
-    isValid: issues.length === 0,
-    issues: issues,
-    score: detection.detection.score,
-    size: Math.min(box.width, box.height)
-  };
-}
-
-// IMPROVED: Liveness detection through movement
-function updateMovementHistory(detection) {
-  const box = detection.detection.box;
-  const center = { 
-    x: box.x + box.width / 2, 
-    y: box.y + box.height / 2,
-    timestamp: Date.now()
-  };
-  
-  faceHistory.push(center);
-  
-  // Keep only recent frames
-  while (faceHistory.length > MOVEMENT_FRAMES) {
-    faceHistory.shift();
-  }
-  
-  // Check for natural movement (not a static photo)
-  if (faceHistory.length >= MOVEMENT_FRAMES) {
-    let totalMovement = 0;
-    for (let i = 1; i < faceHistory.length; i++) {
-      const dx = faceHistory[i].x - faceHistory[i-1].x;
-      const dy = faceHistory[i].y - faceHistory[i-1].y;
-      totalMovement += Math.sqrt(dx*dx + dy*dy);
-    }
-    
-    // Real faces have natural micro-movements (1-10 pixels)
-    // Photos are completely static or move uniformly
-    const avgMovement = totalMovement / (faceHistory.length - 1);
-    const hasNaturalMovement = avgMovement > 0.5 && avgMovement < 15;
-    
-    livenessChecks.movement = hasNaturalMovement;
-  }
-}
-
-// IMPROVED: Blink detection using eye landmarks
-function checkBlink(landmarks) {
-  if (!landmarks || !BLINK_DETECTION) return;
-  
-  // Eye landmarks: left eye (36-41), right eye (42-47)
-  const leftEye = landmarks.getLeftEye();
-  const rightEye = landmarks.getRightEye();
-  
-  if (!leftEye || !rightEye) return;
-  
-  // Calculate Eye Aspect Ratio (EAR)
-  const leftEAR = calculateEAR(leftEye);
-  const rightEAR = calculateEAR(rightEye);
-  const avgEAR = (leftEAR + rightEAR) / 2;
-  
-  // Blink threshold
-  const BLINK_THRESHOLD = 0.21;
-  
-  if (avgEAR < BLINK_THRESHOLD) {
-    if (!blinkState.eyesClosed) {
-      blinkState.eyesClosed = true;
-    }
-  } else {
-    if (blinkState.eyesClosed) {
-      // Eyes just opened - count as a blink
-      blinkState.blinkCount++;
-      blinkState.lastBlinkTime = Date.now();
-      blinkState.eyesClosed = false;
-    }
-  }
-  
-  // Consider blink check passed if we detected at least 1 blink in last 10 seconds
-  const recentBlink = (Date.now() - blinkState.lastBlinkTime) < 10000;
-  livenessChecks.blink = blinkState.blinkCount > 0 && recentBlink;
-}
-
-function calculateEAR(eye) {
-  // Eye Aspect Ratio formula
-  // EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)
-  const p1 = eye[0], p2 = eye[1], p3 = eye[2];
-  const p4 = eye[3], p5 = eye[4], p6 = eye[5];
-  
-  const vertical1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
-  const vertical2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
-  const horizontal = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
-  
-  if (horizontal === 0) return 0.3; // Avoid division by zero
-  return (vertical1 + vertical2) / (2.0 * horizontal);
-}
-
-// IMPROVED: Calculate overall liveness score
-function calculateLivenessScore() {
-  let score = 0;
-  let checks = 0;
-  
-  if (MOVEMENT_CHECK) {
-    checks++;
-    if (livenessChecks.movement) score++;
-  }
-  
-  if (BLINK_DETECTION) {
-    checks++;
-    if (livenessChecks.blink) score++;
-  }
-  
-  if (livenessChecks.faceQuality) {
-    checks++;
-    score++;
-  }
-  
-  return checks > 0 ? score / checks : 0;
-}
-
-// IMPROVED: Better matching with secondary verification
-function findBestMatchImproved(queryDescr) {
-  if (!descriptors.length) {
-    return { label: null, distance: null, employeeId: null, isConfident: false, reason: 'no_templates' };
-  }
-
-  // Calculate distances to all templates
-  const matches = [];
-  for (let i = 0; i < descriptors.length; i++) {
-    const dist = faceapi.euclideanDistance(queryDescr, descriptors[i]);
-    matches.push({
-      index: i,
-      label: labels[i],
-      employeeId: employeeIds[i],
-      distance: dist
-    });
-  }
-  
-  // Sort by distance (lower is better)
-  matches.sort((a, b) => a.distance - b.distance);
-  
-  const best = matches[0];
-  const secondBest = matches.length > 1 ? matches[1] : null;
-  
-  // Check if match is confident
-  let isConfident = false;
-  let reason = null;
-  
-  if (best.distance > MATCH_THRESHOLD) {
-    // Distance too high - not a match
-    reason = 'above_threshold';
-  } else if (secondBest && (best.distance + SECONDARY_GAP) > secondBest.distance) {
-    // Best match is too similar to second-best - ambiguous
-    reason = 'ambiguous';
-  } else if (best.distance < 0.35) {
-    // Very confident match
-    isConfident = true;
-    reason = 'high_confidence';
-  } else if (best.distance <= MATCH_THRESHOLD) {
-    // Good match with sufficient gap
-    isConfident = true;
-    reason = 'confident';
-  }
-  
-  return {
-    label: best.label,
-    distance: best.distance,
-    employeeId: best.employeeId,
-    isConfident: isConfident,
-    reason: reason,
-    secondBestDistance: secondBest?.distance || null
-  };
 }
 
 function findBestMatch(queryDescr /* Float32Array */) {
@@ -655,8 +390,8 @@ async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
       return;
     }
     if (action !== 'AUTO') {
-      if (!bestMatch.isConfident) {
-        flash(`Recognition not confident enough.`, 'text-danger');
+      if (bestMatch.distance == null || bestMatch.distance > MATCH_THRESHOLD) {
+        flash(`Recognition not confident (distance ${bestMatch.distance?.toFixed(4) ?? '--'}).`, 'text-danger');
         return;
       }
     }
@@ -665,16 +400,16 @@ async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     
     // Create a canvas to capture the current face
-    const canvasEl = document.createElement('canvas');
-    const ctx = canvasEl.getContext('2d');
-    canvasEl.width = 640;
-    canvasEl.height = 480;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 640;
+    canvas.height = 480;
     
     // Draw the current video frame
-    ctx.drawImage(video, 0, 0, canvasEl.width, canvasEl.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
     // Convert canvas to blob
-    const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/jpeg', 0.8));
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
     
     // Create form data for Laravel API
     const formData = new FormData();
@@ -685,11 +420,6 @@ async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
     }
     formData.append('image', blob, 'face.jpg');
     formData.append('device_id', 1); // Default device ID
-    
-    // Send liveness status
-    const livenessPass = LIVENESS_ENABLED ? calculateLivenessScore() >= 0.5 : true;
-    formData.append('liveness_pass', livenessPass ? '1' : '0');
-    
     if (currentDescriptor) {
       try { formData.append('embedding', JSON.stringify(Array.from(currentDescriptor))); } catch {}
     }
