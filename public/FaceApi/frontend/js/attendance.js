@@ -324,13 +324,22 @@ function startDetectionLoop() {
         const { label, distance, margin } = findBestMatch(d);
         bestMatch = { label, distance, margin };
 
-        whoDiv.textContent  = label || 'Unknown';
-        distDiv.textContent = (distance != null) ? distance.toFixed(4) : '--';
-
         // Check if match passes both threshold AND margin requirements
         const passesThreshold = label && distance <= MATCH_THRESHOLD;
         const passesMargin = margin === null || margin >= MARGIN_THRESHOLD;
         const isConfidentMatch = passesThreshold && passesMargin;
+
+        // IMPORTANT: Only show the matched name if confidence is HIGH enough
+        // This prevents confusing users when an unknown face shows a registered person's name
+        if (isConfidentMatch) {
+          whoDiv.textContent = label;
+          distDiv.textContent = distance.toFixed(4);
+        } else {
+          // Show "Unknown" for low-confidence matches to avoid confusion
+          whoDiv.textContent = 'Unknown';
+          // Still show distance for debugging, but indicate it's not confident
+          distDiv.textContent = distance != null ? `${distance.toFixed(4)} (too high)` : '--';
+        }
 
         // Multi-frame validation: track consecutive recognitions
         if (isConfidentMatch && label === stableRecognition.label) {
@@ -376,8 +385,9 @@ function startDetectionLoop() {
           setSticky('Recognition ambiguous. Move closer or adjust lighting.', 'text-warning');
           setButtonsEnabled(false);
         } else {
-          status('Face detected but not recognized.');
-          setSticky('Face not recognized. If you are registered, try better lighting.', 'text-warning');
+          // Unknown face or low confidence - clearly indicate this
+          status('Unknown face detected.');
+          setSticky('This face is not registered in the system.', 'text-danger');
           setButtonsEnabled(false);
 
           // DO NOT send unrecognized faces to server in AUTO mode
