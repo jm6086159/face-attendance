@@ -61,7 +61,6 @@ class RecognitionController extends Controller
         // Prefer client-provided embedding to avoid model mismatch.
         $probe = null;
         $json  = [];
-        $probeModel = null;
         if ($req->filled('embedding')) {
             $arr = json_decode($req->input('embedding'), true);
             if (!is_array($arr) || empty($arr)) {
@@ -69,7 +68,6 @@ class RecognitionController extends Controller
             }
             $probe = array_map('floatval', array_slice($arr, 0, 512));
             $json['model'] = 'face-api.js';
-            $probeModel = 'face-api.js';
             $json['liveness_pass'] = false;
         } else {
             // Send the image to FastAPI for face detection + embedding extraction
@@ -128,24 +126,21 @@ class RecognitionController extends Controller
                 return response()->json(['message' => 'No face detected.'], 422);
             }
             $probe = $json['embedding'];
-            $probeModel = $json['model'] ?? 'face_recognition_dlib';
         }
         
-        // Improved matching with secondary verification - filter by model for consistency
-        [$bestEmployee, $bestScore, $secondBestScore, $matchCount] = $this->findBestMatch($probe, $probeModel);
+        // Improved matching with secondary verification
+        [$bestEmployee, $bestScore, $secondBestScore, $matchCount] = $this->findBestMatch($probe);
 
-        // Get threshold from settings or config (increased default to 0.80 for better accuracy)
+        // Get threshold from settings or config (increased default from 0.65 to 0.72)
         $recognitionSettings = Setting::getCached('recognition.settings', [
-            'threshold' => 0.80,
+            'threshold' => 0.72,
             'require_liveness' => false,
-            'min_gap' => 0.10,
         ]);
-        $threshold = (float) ($recognitionSettings['threshold'] ?? config("services.recognition.threshold", 0.80));
+        $threshold = (float) ($recognitionSettings['threshold'] ?? config("services.recognition.threshold", 0.72));
         $requireLiveness = (bool) ($recognitionSettings['require_liveness'] ?? false);
-        $minGap = (float) ($recognitionSettings['min_gap'] ?? 0.10);
         
         // Validate the match with improved accuracy checks
-        [$isValid, $matchType, $rejectReason] = $this->validateMatch($bestScore, $secondBestScore, $threshold, $minGap);
+        [$isValid, $matchType, $rejectReason] = $this->validateMatch($bestScore, $secondBestScore, $threshold);
         
         // Reject invalid matches
         if (!$isValid) {
@@ -363,32 +358,19 @@ class RecognitionController extends Controller
 
     /**
      * Find the best matching employee with improved accuracy.
-     * Filters by model type to prevent cross-model comparison issues.
      * Returns [Employee|null, bestScore, secondBestScore, matchCount]
      */
-    private function findBestMatch(array $probe, ?string $probeModel = null): array
+    private function findBestMatch(array $probe): array
     {
         $matches = [];
-        $allScores = []; // For debugging
 
-        // Build query - filter by model if specified
-        $query = FaceTemplate::with('employee:id,emp_code')
-            ->whereNotNull('embedding');
-        
-        if ($probeModel) {
-            // Only compare with templates from the same model
-            $query->where('model', $probeModel);
-        }
-
-        $query->chunk(300, function ($chunk) use (&$matches, &$allScores, $probe) {
+        FaceTemplate::with('employee:id,emp_code')->chunk(300, function ($chunk) use (&$matches, $probe) {
             foreach ($chunk as $tpl) {
                 if (!$tpl->employee) continue;
                 
                 $score = $this->cosine($probe, $tpl->embedding ?? []);
                 if ($score > 0) {
                     $empId = $tpl->employee->id;
-                    $allScores[] = ['emp' => $tpl->employee->emp_code, 'score' => round($score, 4)];
-                    
                     // Keep the best score per employee (they may have multiple templates)
                     if (!isset($matches[$empId]) || $score > $matches[$empId]['score']) {
                         $matches[$empId] = [
@@ -400,15 +382,7 @@ class RecognitionController extends Controller
             }
         });
 
-        // Log all scores for debugging
-        \Log::debug('Face recognition scores', [
-            'probe_model' => $probeModel,
-            'template_count' => count($allScores),
-            'scores' => array_slice($allScores, 0, 10), // Top 10 for debugging
-        ]);
-
         if (empty($matches)) {
-            \Log::warning('No matching templates found', ['probe_model' => $probeModel]);
             return [null, -1.0, -1.0, 0];
         }
 
@@ -417,12 +391,6 @@ class RecognitionController extends Controller
 
         $best = $matches[0];
         $secondBest = $matches[1] ?? null;
-
-        \Log::debug('Best matches', [
-            'best' => ['emp' => $best['employee']->emp_code, 'score' => $best['score']],
-            'second' => $secondBest ? ['emp' => $secondBest['employee']->emp_code, 'score' => $secondBest['score']] : null,
-            'gap' => $secondBest ? ($best['score'] - $secondBest['score']) : 'N/A',
-        ]);
 
         return [
             $best['employee'],
@@ -435,66 +403,35 @@ class RecognitionController extends Controller
     /**
      * Validate that the match is confident and distinct from other candidates.
      * This prevents false positives when an unknown face partially matches multiple people.
-     * 
-     * Key principles:
-     * - Unknown faces typically score 0.50-0.70 against everyone (noise floor)
-     * - Real matches should score 0.80+ with significant gap to second-best
-     * - Ambiguous matches (small gap) are rejected to prevent false positives
      */
-    private function validateMatch(float $bestScore, float $secondBestScore, float $threshold, float $minGap = 0.10): array
+    private function validateMatch(float $bestScore, float $secondBestScore, float $threshold): array
     {
-        // Log for debugging (can be removed in production)
-        \Log::debug('Face match validation', [
-            'best_score' => $bestScore,
-            'second_best' => $secondBestScore,
-            'threshold' => $threshold,
-            'gap' => $secondBestScore > 0 ? $bestScore - $secondBestScore : 'N/A',
-        ]);
-
         // Primary check: must exceed threshold
         if ($bestScore < $threshold) {
             return [false, 'below_threshold', "Score {$bestScore} is below threshold {$threshold}"];
         }
 
-        // Very high confidence check: scores above 0.90 are almost certainly correct
-        if ($bestScore >= 0.90) {
-            return [true, 'very_high_confidence', null];
-        }
-
         // Secondary check: must be significantly better than second-best match
-        // This is CRITICAL for preventing false positives on unknown faces
+        // This prevents matching unknown faces that score similarly across multiple people
+        $minGap = 0.08; // Require at least 8% gap between best and second-best
         if ($secondBestScore > 0) {
             $gap = $bestScore - $secondBestScore;
-            
-            // Unknown faces typically score similarly across multiple people
-            // Genuine matches have a clear winner with significant gap
-            if ($gap < $minGap) {
-                // Only allow small gaps if the best score is exceptionally high
-                if ($bestScore < 0.88) {
-                    return [false, 'ambiguous_match', "Gap {$gap} is too small (need {$minGap}). This may be an unknown face."];
-                }
-            }
-            
-            // Additional check: if second-best is also high, be suspicious
-            if ($secondBestScore > ($threshold - 0.05)) {
-                return [false, 'multiple_high_matches', "Second-best score {$secondBestScore} is also high - likely unknown face"];
+            if ($gap < $minGap && $bestScore < ($threshold + 0.15)) {
+                return [false, 'ambiguous_match', "Ambiguous: gap between top matches is only {$gap}"];
             }
         }
 
-        // High confidence with good separation
+        // High confidence check: very high scores are always accepted
         if ($bestScore >= 0.85) {
             return [true, 'high_confidence', null];
         }
 
-        // Medium confidence - require larger gap
-        if ($bestScore >= $threshold) {
-            if ($secondBestScore < 0 || ($bestScore - $secondBestScore) >= $minGap) {
-                return [true, 'confident', null];
-            }
-            return [false, 'insufficient_separation', "Score {$bestScore} needs larger gap from second-best"];
+        // Medium confidence with good separation
+        if ($bestScore >= $threshold && ($secondBestScore < 0 || ($bestScore - $secondBestScore) >= $minGap)) {
+            return [true, 'confident', null];
         }
 
-        return [false, 'unknown', "No valid match criteria met"];
+        return [true, 'marginal', null];
     }
 
     private function cosine(array $a, array $b): float

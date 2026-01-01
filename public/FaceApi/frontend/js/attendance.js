@@ -17,19 +17,16 @@ const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.2
 const KNOWN_FACES_URL  = '/api/face-embeddings';
 const MARK_ATT_URL     = '/api/recognize-proxy';
 
-// IMPROVED: Much stricter thresholds for better accuracy
+// IMPROVED: Stricter thresholds for better accuracy
 // Client-side uses Euclidean distance (lower is better, 0 = perfect match)
-// Typical good matches: 0.3-0.4, marginal: 0.4-0.5, unknown: 0.5+
-const MATCH_THRESHOLD  = 0.42;   // Very strict - reject anything above this
-const HIGH_CONFIDENCE  = 0.35;   // Very confident match threshold
-const SECONDARY_GAP    = 0.10;   // Require 10% gap between best and second-best match
-const MIN_MATCHES_REQ  = 1;      // Minimum templates that must match well
+const MATCH_THRESHOLD  = 0.50;   // Stricter - was 0.60
+const SECONDARY_GAP    = 0.08;   // Minimum gap between best and second-best match
 const AUTO_MODE        = true; 
 const AUTO_COOLDOWN_MS = 12000;
 
-// IMPROVED: Stricter face quality requirements
-const MIN_FACE_SIZE    = 100;    // Minimum face width in pixels (larger = better accuracy)
-const MIN_CONFIDENCE   = 0.85;   // Minimum detection confidence score
+// IMPROVED: Face quality requirements
+const MIN_FACE_SIZE    = 80;     // Minimum face width in pixels
+const MIN_CONFIDENCE   = 0.80;   // Minimum detection confidence score
 const REQUIRE_CENTERED = true;   // Face must be roughly centered
 
 // IMPROVED: Liveness detection settings
@@ -37,7 +34,6 @@ const LIVENESS_ENABLED = true;
 const BLINK_DETECTION  = true;
 const MOVEMENT_CHECK   = true;
 const MOVEMENT_FRAMES  = 10;     // Number of frames to check for movement
-const REQUIRE_LIVENESS = true;   // Must pass liveness before allowing match
 // ====================
 
 let labels = [];           // ['John Doe', ...]
@@ -418,21 +414,13 @@ function startDetectionLoop() {
             }
           }
         } else {
-          // IMPROVED: Show specific rejection reasons for debugging
-          const reasons = {
-            'above_threshold': `Face detected but not recognized (distance: ${matchResult.distance?.toFixed(3)})`,
-            'ambiguous': 'Multiple possible matches detected. Please face the camera directly.',
-            'ambiguous_high': 'Match too close to other faces. Please try again.',
-            'multiple_close_matches': 'Face matches multiple people - likely unknown. Please register first.',
-            'not_confident_enough': 'Low confidence match. Move closer and ensure good lighting.',
-          };
-          const msg = reasons[matchResult.reason] || 'Face not recognized or low confidence.';
-          status(msg);
-          setSticky(msg, 'text-warning');
-          
-          // Log debug info to console
-          console.log('Match rejected:', matchResult);
-          
+          if (matchResult.reason === 'ambiguous') {
+            status('Face detected but match is ambiguous. Please try again.');
+            setSticky('Multiple possible matches detected. Please face the camera directly.', 'text-warning');
+          } else {
+            status('Face detected but not recognized.');
+            setSticky('Face not recognized or low confidence. Please try again.', 'text-warning');
+          }
           setButtonsEnabled(false);
           // REMOVED: Fallback auto-recognition that was causing false positives
         }
@@ -590,7 +578,7 @@ function calculateLivenessScore() {
   return checks > 0 ? score / checks : 0;
 }
 
-// IMPROVED: Much stricter matching with multiple validation checks
+// IMPROVED: Better matching with secondary verification
 function findBestMatchImproved(queryDescr) {
   if (!descriptors.length) {
     return { label: null, distance: null, employeeId: null, isConfident: false, reason: 'no_templates' };
@@ -613,71 +601,25 @@ function findBestMatchImproved(queryDescr) {
   
   const best = matches[0];
   const secondBest = matches.length > 1 ? matches[1] : null;
-  const thirdBest = matches.length > 2 ? matches[2] : null;
   
-  // Log for debugging
-  console.log('Match candidates:', {
-    best: { label: best.label, distance: best.distance.toFixed(4) },
-    secondBest: secondBest ? { label: secondBest.label, distance: secondBest.distance.toFixed(4) } : null,
-    gap: secondBest ? (secondBest.distance - best.distance).toFixed(4) : 'N/A'
-  });
-  
+  // Check if match is confident
   let isConfident = false;
   let reason = null;
   
-  // STRICT CHECK 1: Best distance must be below threshold
   if (best.distance > MATCH_THRESHOLD) {
+    // Distance too high - not a match
     reason = 'above_threshold';
-    console.log(`REJECTED: Distance ${best.distance.toFixed(4)} > threshold ${MATCH_THRESHOLD}`);
-  } 
-  // STRICT CHECK 2: Very high confidence (distance < 0.30) - always accept
-  else if (best.distance < 0.30) {
+  } else if (secondBest && (best.distance + SECONDARY_GAP) > secondBest.distance) {
+    // Best match is too similar to second-best - ambiguous
+    reason = 'ambiguous';
+  } else if (best.distance < 0.35) {
+    // Very confident match
     isConfident = true;
-    reason = 'very_high_confidence';
-    console.log(`ACCEPTED: Very high confidence, distance ${best.distance.toFixed(4)}`);
-  }
-  // STRICT CHECK 3: High confidence (distance < HIGH_CONFIDENCE)
-  else if (best.distance < HIGH_CONFIDENCE) {
-    // Still require some gap from second-best
-    if (!secondBest || (secondBest.distance - best.distance) >= 0.05) {
-      isConfident = true;
-      reason = 'high_confidence';
-      console.log(`ACCEPTED: High confidence with gap`);
-    } else {
-      reason = 'ambiguous_high';
-      console.log(`REJECTED: High score but too close to second-best`);
-    }
-  }
-  // STRICT CHECK 4: Medium confidence - require significant gap
-  else if (best.distance <= MATCH_THRESHOLD) {
-    if (!secondBest) {
-      // Only one template - need very good distance
-      if (best.distance < 0.40) {
-        isConfident = true;
-        reason = 'confident_single';
-      } else {
-        reason = 'not_confident_enough';
-      }
-    } else {
-      const gap = secondBest.distance - best.distance;
-      
-      // CRITICAL: Unknown faces score similarly against everyone
-      // Genuine matches have clear separation
-      if (gap < SECONDARY_GAP) {
-        reason = 'ambiguous';
-        console.log(`REJECTED: Ambiguous - gap ${gap.toFixed(4)} < required ${SECONDARY_GAP}`);
-      } 
-      // Check if multiple people have similar high scores (sign of unknown face)
-      else if (secondBest.distance < 0.55) {
-        reason = 'multiple_close_matches';
-        console.log(`REJECTED: Second-best also has good score ${secondBest.distance.toFixed(4)}`);
-      }
-      else {
-        isConfident = true;
-        reason = 'confident';
-        console.log(`ACCEPTED: Confident with gap ${gap.toFixed(4)}`);
-      }
-    }
+    reason = 'high_confidence';
+  } else if (best.distance <= MATCH_THRESHOLD) {
+    // Good match with sufficient gap
+    isConfident = true;
+    reason = 'confident';
   }
   
   return {
@@ -686,8 +628,7 @@ function findBestMatchImproved(queryDescr) {
     employeeId: best.employeeId,
     isConfident: isConfident,
     reason: reason,
-    secondBestDistance: secondBest?.distance || null,
-    gap: secondBest ? (secondBest.distance - best.distance) : null
+    secondBestDistance: secondBest?.distance || null
   };
 }
 
