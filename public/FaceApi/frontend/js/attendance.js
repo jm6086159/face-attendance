@@ -183,27 +183,6 @@ function playAttendanceTone(kind /* 'time_in' | 'time_out' */) {
   audio.play().catch(() => {});
 }
 
-// Play a sound when face is recognized (uses time_in sound as confirmation beep)
-function playRecognitionSound() {
-  const label = bestMatch.label || 'unknown';
-  const now = Date.now();
-  
-  // Check if we recently played for this person
-  if (lastRecognitionBeep.label === label && (now - lastRecognitionBeep.ts < RECOGNITION_BEEP_COOLDOWN_MS)) {
-    return; // Skip - already beeped for this person recently
-  }
-  
-  // Update last beep tracking
-  lastRecognitionBeep = { label, ts: now };
-  
-  // Play the time_in sound as a recognition confirmation
-  if (soundTimeIn) {
-    soundTimeIn.pause();
-    soundTimeIn.currentTime = 0;
-    soundTimeIn.play().catch(() => {});
-  }
-}
-
 function resolveToneAction(serverAction, requestedAction) {
   const normalized = (serverAction || '').toLowerCase();
   if (normalized === 'time_in' || normalized === 'time_out') {
@@ -393,10 +372,6 @@ function startDetectionLoop() {
           ok(`Ready: ${label} (avg dist ${avgDistance.toFixed(4)}, ${stableRecognition.count} frames)`);
           flash(`Face recognized: ${label}`, 'text-success');
           setButtonsEnabled(true);
-          
-          // Play recognition sound immediately when face is recognized
-          // This gives feedback even before server response
-          playRecognitionSound();
 
           if (AUTO_MODE) {
             const now = Date.now();
@@ -549,11 +524,39 @@ async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
     }
 
     if (!res.ok) {
-      throw new Error(data.message || `Failed to mark ${action}`);
+      // Handle specific error cases with user-friendly messages
+      const errorMsg = data.message || `Failed to mark ${action}`;
+      
+      // Check for schedule-related errors
+      if (errorMsg.includes('Outside allowed windows') || errorMsg.includes('Time-in allowed only') || errorMsg.includes('Time-out allowed only')) {
+        clearSticky();
+        flash(`⏰ ${errorMsg}`, 'text-warning');
+        // Don't throw - just show the message and continue
+        return;
+      }
+      
+      // Check for already marked
+      if (data.already_marked || data.already_completed) {
+        clearSticky();
+        flash(`✓ ${errorMsg}`, 'text-info');
+        return;
+      }
+      
+      throw new Error(errorMsg);
     }
     const act = (data.action || '').toString().toLowerCase() || (action === 'IN' ? 'time_in' : action === 'OUT' ? 'time_out' : 'auto');
     clearSticky();
-    flash(`Marked ${act.replace('_',' ')} for ${bestMatch.label} (confidence ${data.confidence?.toFixed(4) || 'N/A'})`, 'text-success');
+    
+    // Handle already marked responses (server returns 200 with flags)
+    if (data.already_completed) {
+      flash(`✓ ${bestMatch.label} already completed attendance today.`, 'text-info');
+    } else if (data.already_marked) {
+      const actionName = act === 'time_in' ? 'time in' : 'time out';
+      flash(`✓ ${bestMatch.label} already marked ${actionName} today.`, 'text-info');
+    } else {
+      flash(`✓ Marked ${act.replace('_',' ')} for ${bestMatch.label}`, 'text-success');
+    }
+    
     const toneAction = resolveToneAction(act, action);
     // Only play audio when the server confirms a time_in / time_out, and avoid repeats for same person/action within cooldown
     const nowTs = Date.now();
