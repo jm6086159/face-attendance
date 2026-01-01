@@ -48,6 +48,9 @@ soundTimeOut.preload = 'auto';
 let audioUnlockBound = false;
 let lastTone = { label: null, action: null, ts: 0 };
 const TONE_COOLDOWN_MS = 12000;
+// Separate cooldown for recognition beep (shorter, per-person)
+let lastRecognitionBeep = { label: null, ts: 0 };
+const RECOGNITION_BEEP_COOLDOWN_MS = 3000; // 3 seconds between beeps for same person
 
 setButtonsEnabled(false);
 
@@ -178,6 +181,27 @@ function playAttendanceTone(kind /* 'time_in' | 'time_out' */) {
   audio.pause();
   audio.currentTime = 0;
   audio.play().catch(() => {});
+}
+
+// Play a sound when face is recognized (uses time_in sound as confirmation beep)
+function playRecognitionSound() {
+  const label = bestMatch.label || 'unknown';
+  const now = Date.now();
+  
+  // Check if we recently played for this person
+  if (lastRecognitionBeep.label === label && (now - lastRecognitionBeep.ts < RECOGNITION_BEEP_COOLDOWN_MS)) {
+    return; // Skip - already beeped for this person recently
+  }
+  
+  // Update last beep tracking
+  lastRecognitionBeep = { label, ts: now };
+  
+  // Play the time_in sound as a recognition confirmation
+  if (soundTimeIn) {
+    soundTimeIn.pause();
+    soundTimeIn.currentTime = 0;
+    soundTimeIn.play().catch(() => {});
+  }
 }
 
 function resolveToneAction(serverAction, requestedAction) {
@@ -369,6 +393,10 @@ function startDetectionLoop() {
           ok(`Ready: ${label} (avg dist ${avgDistance.toFixed(4)}, ${stableRecognition.count} frames)`);
           flash(`Face recognized: ${label}`, 'text-success');
           setButtonsEnabled(true);
+          
+          // Play recognition sound immediately when face is recognized
+          // This gives feedback even before server response
+          playRecognitionSound();
 
           if (AUTO_MODE) {
             const now = Date.now();
