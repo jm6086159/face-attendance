@@ -488,8 +488,9 @@ async function doMark(action /* 'IN' | 'OUT' | 'AUTO' */) {
       return;
     }
     
-    // Check margin - reject ambiguous matches
-    if (bestMatch.margin !== null && bestMatch.margin < MARGIN_THRESHOLD) {
+    // Check margin - reject ambiguous matches (but skip for strong matches)
+    const isStrongMatch = bestMatch.distance <= STRONG_MATCH_THRESHOLD;
+    if (!isStrongMatch && bestMatch.margin !== null && bestMatch.margin < MARGIN_THRESHOLD) {
       if (action !== 'AUTO') {
         flash('Match is ambiguous. Please adjust your position.', 'text-danger');
       }

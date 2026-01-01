@@ -131,8 +131,10 @@ class RecognitionController extends Controller
         [$bestEmployee, $bestScore, $secondBestScore, $matchDetails] = $this->findBestMatchWithMargin($probe);
 
         // Tune these thresholds with your data
-        $threshold = (float) config("services.recognition.threshold", 0.75);
-        $marginRequired = (float) config("services.recognition.margin", 0.08);
+        // Cosine similarity: higher is better, 1.0 = perfect match
+        $threshold = (float) config("services.recognition.threshold", 0.65);
+        $strongMatchThreshold = (float) config("services.recognition.strong_threshold", 0.80);
+        $marginRequired = (float) config("services.recognition.margin", 0.05);
         
         // Calculate confidence gap between best and second-best match
         $margin = $bestScore - $secondBestScore;
@@ -146,8 +148,12 @@ class RecognitionController extends Controller
             ], 422);
         }
         
+        // For strong matches (high cosine similarity), skip margin check
+        $isStrongMatch = $bestScore >= $strongMatchThreshold;
+        
         // Reject if margin is too small (ambiguous match - could be multiple people)
-        if ($margin < $marginRequired && $secondBestScore > 0.5) {
+        // But skip this check for strong matches
+        if (!$isStrongMatch && $margin < $marginRequired && $secondBestScore > 0.5) {
             return response()->json([
                 'message' => 'Face recognition ambiguous. Please try again with better lighting.',
                 'confidence' => $bestScore,
