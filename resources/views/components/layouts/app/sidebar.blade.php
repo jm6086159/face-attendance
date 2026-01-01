@@ -34,6 +34,9 @@
                     <flux:navlist.item icon="calendar" :href="route('attendance.history')" :current="request()->routeIs('attendance.history')" wire:navigate>{{ __('History') }}</flux:navlist.item>
                     <flux:navlist.item icon="layout-grid" :href="route('settings.attendance-schedule')" :current="request()->routeIs('settings.attendance-schedule')" wire:navigate>{{ __('Attendance Schedule') }}</flux:navlist.item>
                 </flux:navlist.group>
+                <flux:navlist.group :heading="__('Reports')" class="grid">
+                    <flux:navlist.item icon="chart-bar" :href="route('reports.attendance-issues')" :current="request()->routeIs('reports.attendance-issues')" wire:navigate>{{ __('Attendance Issues') }}</flux:navlist.item>
+                </flux:navlist.group>
             </flux:navlist>
 
             <flux:spacer />

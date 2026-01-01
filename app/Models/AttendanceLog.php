@@ -11,7 +11,7 @@ class AttendanceLog extends Model
     use HasFactory;
 
     protected $fillable = [
-        'employee_id', 'emp_code', 'action', 'is_late', 'logged_at', 'confidence', 'liveness_pass', 'device_id', 'meta',
+        'employee_id', 'emp_code', 'action', 'is_late', 'is_undertime', 'undertime_minutes', 'logged_at', 'confidence', 'liveness_pass', 'device_id', 'meta',
     ];
 
     protected $casts = [
@@ -19,6 +19,8 @@ class AttendanceLog extends Model
         'confidence'=> 'float',
         'liveness_pass' => 'boolean',
         'is_late' => 'boolean',
+        'is_undertime' => 'boolean',
+        'undertime_minutes' => 'integer',
         'meta' => 'array',
     ];
 

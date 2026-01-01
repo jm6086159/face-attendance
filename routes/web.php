@@ -7,6 +7,7 @@ use App\Livewire\Employees\Index as EmployeesIndex;
 use App\Livewire\Employees\Form  as EmployeesForm;
 use App\Livewire\Attendance\Index as AttendanceIndex;
 use App\Livewire\Attendance\History as AttendanceHistory;
+use App\Livewire\Reports\AttendanceIssuesReport;
 use App\Http\Controllers\RecognitionController;
 use App\Http\Controllers\DepartmentEmployeeController;
 
@@ -74,6 +75,9 @@ Route::middleware(['auth'])->group(function () {
     // Attendance page
     Route::get('/attendance', AttendanceIndex::class)->name('attendance.index');
     Route::get('/attendance/history', AttendanceHistory::class)->name('attendance.history');
+
+    // Reports
+    Route::get('/reports/attendance-issues', AttendanceIssuesReport::class)->name('reports.attendance-issues');
 
     // Dependent dropdown endpoint (department -> employees)
     Route::get('/departments/{department?}/employees', DepartmentEmployeeController::class)
