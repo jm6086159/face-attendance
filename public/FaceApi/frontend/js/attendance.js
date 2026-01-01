@@ -18,9 +18,12 @@ const KNOWN_FACES_URL  = '/api/face-embeddings';
 const MARK_ATT_URL     = '/api/recognize-proxy';
 // Client-side recognition uses Euclidean distance.
 // Lower values = stricter matching. Typical face-api.js threshold is 0.5-0.6
-// We use 0.40 for strict matching to prevent false positives.
+// We use 0.45 for strict matching to prevent false positives.
 const MATCH_THRESHOLD  = 0.45;
-const MARGIN_THRESHOLD = 0.08; // Minimum gap between best and second-best match
+// Minimum gap between best and second-best match (only applied for borderline matches)
+const MARGIN_THRESHOLD = 0.05;
+// If distance is below this, it's a strong match - skip margin check
+const STRONG_MATCH_THRESHOLD = 0.30;
 const AUTO_MODE        = true; // Automatically mark attendance when confident
 const AUTO_COOLDOWN_MS = 12000; // prevent double-marks within this window
 const MIN_STABLE_FRAMES = 4; // Require consistent recognition across multiple frames
@@ -327,7 +330,10 @@ function startDetectionLoop() {
 
         // Check if match passes both threshold AND margin requirements
         const passesThreshold = label && distance <= MATCH_THRESHOLD;
-        const passesMargin = margin === null || margin >= MARGIN_THRESHOLD;
+        // For strong matches (low distance), skip margin check entirely
+        // Only require margin for borderline matches (0.30 - 0.45)
+        const isStrongMatch = distance <= STRONG_MATCH_THRESHOLD;
+        const passesMargin = isStrongMatch || margin === null || margin >= MARGIN_THRESHOLD;
         const isConfidentMatch = passesThreshold && passesMargin;
 
         // IMPORTANT: Only show the matched name if confidence is HIGH enough
