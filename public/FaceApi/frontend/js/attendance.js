@@ -18,8 +18,8 @@ const KNOWN_FACES_URL  = '/api/face-embeddings';
 const MARK_ATT_URL     = '/api/recognize-proxy';
 // Client-side recognition uses Euclidean distance.
 // Lower values = stricter matching. Typical face-api.js threshold is 0.5-0.6
-// We use 0.50 to reduce false positives.
-const MATCH_THRESHOLD  = 0.50;
+// We use 0.40 for strict matching to prevent false positives.
+const MATCH_THRESHOLD  = 0.40;
 const MARGIN_THRESHOLD = 0.08; // Minimum gap between best and second-best match
 const AUTO_MODE        = true; // Automatically mark attendance when confident
 const AUTO_COOLDOWN_MS = 12000; // prevent double-marks within this window
