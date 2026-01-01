@@ -299,7 +299,7 @@
                             <td class="px-4 py-3 text-center">
                                 @if($record['late_minutes'] > 0)
                                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                                        {{ $record['late_minutes'] }}m
+                                        {{ number_format($record['late_minutes'], 2) }}m
                                     </span>
                                 @else
                                     <span class="text-gray-400">-</span>
@@ -308,7 +308,7 @@
                             <td class="px-4 py-3 text-center">
                                 @if($record['undertime_minutes'] > 0)
                                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                                        {{ $record['undertime_minutes'] }}m
+                                        {{ number_format($record['undertime_minutes'], 2) }}m
                                     </span>
                                 @else
                                     <span class="text-gray-400">-</span>
@@ -317,7 +317,7 @@
                             <td class="px-4 py-3 text-center">
                                 @if($record['overtime_minutes'] > 0)
                                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                        {{ $record['overtime_minutes'] }}m
+                                        {{ number_format($record['overtime_minutes'], 2) }}m
                                     </span>
                                 @else
                                     <span class="text-gray-400">-</span>
