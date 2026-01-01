@@ -73,12 +73,24 @@ class AttendanceIssuesReport extends Component
     {
         $cfg = Setting::getValue('attendance.schedule');
         
+        // Ensure $cfg is an array to prevent "accessing array offset on null" errors
+        if (!is_array($cfg)) {
+            $cfg = [];
+        }
+        
+        // Handle days - could be JSON string in some databases
+        $days = $cfg['days'] ?? [1, 2, 3, 4, 5];
+        if (is_string($days)) {
+            $decoded = json_decode($days, true);
+            $days = is_array($decoded) ? $decoded : [1, 2, 3, 4, 5];
+        }
+        
         return [
             'in_start'  => $cfg['in_start'] ?? '06:00',
             'in_end'    => $cfg['in_end'] ?? '08:00',
             'out_start' => $cfg['out_start'] ?? '16:00',
             'out_end'   => $cfg['out_end'] ?? '17:00',
-            'days'      => $cfg['days'] ?? [1, 2, 3, 4, 5],
+            'days'      => $days,
             'late_after' => $cfg['late_after'] ?? null,
             'late_grace' => (int)($cfg['late_grace'] ?? 0),
         ];
@@ -92,7 +104,15 @@ class AttendanceIssuesReport extends Component
         $inTime = Carbon::parse($cfg['in_end']); // Latest allowed time in
         $outTime = Carbon::parse($cfg['out_start']); // Earliest allowed time out
         
-        return $inTime->diffInMinutes($outTime);
+        // Use absolute difference to ensure positive value
+        $minutes = abs($inTime->diffInMinutes($outTime));
+        
+        // Fallback to 8 hours (480 minutes) if calculation seems wrong
+        if ($minutes === 0 || $minutes > 1440) { // 0 or more than 24 hours
+            $minutes = 480; // Default 8 hours
+        }
+        
+        return $minutes;
     }
 
     private function generateDateSeries(Carbon $start, Carbon $end): Collection
